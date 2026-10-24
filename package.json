@@ -1,0 +1,15 @@
+{
+  "name": "badminton3d",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "3D 体感羽毛球，支持单人/双人分屏",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "qrcode": "^1.5.4",
+    "socket.io": "^4.7.5",
+    "three": "^0.180.0"
+  }
+}
