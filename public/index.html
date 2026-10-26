@@ -131,6 +131,11 @@
   .qrbox svg{display:block;width:100%;height:auto}
   .url{font-family:ui-monospace,Menlo,monospace;font-size:10px;color:var(--dim);
     word-break:break-all;line-height:1.5}
+  .addrPick{display:flex;flex-wrap:wrap;gap:5px;margin-top:6px}
+  .addrPick:empty{display:none}
+  .addrPick button{font:inherit;font-size:10px;padding:3px 7px;border-radius:6px;
+    border:1px solid #2c3a45;background:#141b21;color:#9fb0bd;cursor:pointer}
+  .addrPick button.on{border-color:var(--p1);color:#e8f4ff;background:#173247}
   .slots{margin-top:10px;display:flex;flex-direction:column;gap:6px}
   .srow{display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--dim)}
   .sd{width:6px;height:6px;border-radius:99px;background:#5a6577}
@@ -222,9 +227,10 @@
 
 <div class="qrPanel" id="qrPanel">
   <h4>手机当球拍</h4>
-  <p>手机和电脑连同一个 WiFi，扫码打开手柄页。</p>
+  <p>手机和电脑连同一个 WiFi（或用蓝牙网络共享），扫码打开手柄页。</p>
   <div class="qrbox" id="qrboxPanel"><span style="font-size:11px;color:#888">生成中…</span></div>
   <div class="url" id="qurlPanel"></div>
+  <div class="addrPick" id="addrPickPanel"></div>
   <div class="slots">
     <div class="srow"><span class="sd" id="dL"></span><span id="kL">左边 · 玩家 1 未连接</span></div>
     <div class="srow"><span class="sd" id="dR"></span><span id="kR">右边 · 电脑（无需连接）</span></div>
@@ -235,9 +241,10 @@
   <div class="startGrid">
     <div class="qrCard">
       <h3>手机当球拍</h3>
-      <p class="sub">和电脑连同一个 WiFi，扫码进入手柄页。</p>
+      <p class="sub">和电脑连同一个 WiFi（或蓝牙网络共享），扫码进入手柄页。</p>
       <div class="qrbox" id="qrbox"><span style="font-size:11px;color:#888">生成中…</span></div>
       <div class="url" id="qurl"></div>
+      <div class="addrPick" id="addrPickStart"></div>
       <div class="stepList">
         <div class="step"><i>1</i><span>扫码打开手机页，点「开启体感」</span></div>
         <div class="step"><i>2</i><span>握拍就位，等手机完成静止校准</span></div>
@@ -1332,7 +1339,10 @@ socket.on('connect', () => socket.emit('game:difficulty', { level: aiLevel }));
 $('b1').onclick = () => setMode(false);
 $('b2').onclick = () => setMode(true);
 $('brs').onclick = () => socket.emit('game:restart');
-$('bqr').onclick = () => $('qrPanel').classList.toggle('on');
+$('bqr').onclick = () => {
+  // 每次打开都重新读网卡：蓝牙网络共享可能刚连上
+  if ($('qrPanel').classList.toggle('on')) loadQr();
+};
 $('bsnd').onclick = () => {
   soundOn = !soundOn;
   $('bsnd').textContent = soundOn ? '声音开' : '声音关';
@@ -1344,30 +1354,55 @@ $('go').onclick = () => {
 };
 document.addEventListener('click', () => ensureAudio(), { once: true });
 
-// 二维码
+// 二维码：支持多网卡切换（WiFi / 蓝牙网络共享 / 手机热点）
 let ctrlUrl = `https://${location.hostname}:3543/ctrl`;
+let ctrlHost = localStorage.getItem('bm3_host') || '';
+let netAddrs = [];
+
 function fillQr(url, svg) {
   $('qurl').textContent = url;
   $('qurlPanel').textContent = url;
   $('qrbox').innerHTML = svg;
   $('qrboxPanel').innerHTML = svg;
 }
+
+function renderAddrPick() {
+  for (const id of ['addrPickStart', 'addrPickPanel']) {
+    const wrap = $(id);
+    wrap.innerHTML = '';
+    // 只有一个地址时不显示切换条
+    if (netAddrs.length < 2) continue;
+    for (const a of netAddrs) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = a.name;
+      b.title = a.address;
+      b.className = a.address === ctrlHost ? 'on' : '';
+      b.onclick = () => {
+        ctrlHost = a.address;
+        localStorage.setItem('bm3_host', ctrlHost);
+        renderAddrPick();
+        loadQr();
+      };
+      wrap.appendChild(b);
+    }
+  }
+}
+
 function loadQr() {
   fetch('/api/net')
     .then((r) => r.json())
     .then((n) => {
-      ctrlUrl = `https://${n.lanIP}:${n.https}/ctrl`;
+      netAddrs = (n.addrs && n.addrs.length) ? n.addrs : [{ address: n.lanIP, name: 'WLAN' }];
+      // 记住的地址已失效（换了网），回退到第一个
+      if (!netAddrs.some((a) => a.address === ctrlHost)) ctrlHost = netAddrs[0].address;
+      renderAddrPick();
+      ctrlUrl = `https://${ctrlHost}:${n.https}/ctrl`;
       return fetch('/api/qr?text=' + encodeURIComponent(ctrlUrl));
     })
     .then((r) => r.text())
     .then((svg) => fillQr(ctrlUrl, svg))
-    .catch(() => {
-      ctrlUrl = `https://${location.hostname}:3543/ctrl`;
-      fetch('/api/qr?text=' + encodeURIComponent(ctrlUrl))
-        .then((r) => r.text())
-        .then((svg) => fillQr(ctrlUrl, svg))
-        .catch(() => {});
-    });
+    .catch(() => {});
 }
 loadQr();
 </script>

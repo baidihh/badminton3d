@@ -6,6 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Server } from 'socket.io';
 import QRCode from 'qrcode';
+import selfsigned from 'selfsigned';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(__dirname, 'public');
@@ -13,21 +14,50 @@ const PUBLIC = path.join(__dirname, 'public');
 const HTTP_PORT = Number(process.env.PORT || 3100);
 const HTTPS_PORT = Number(process.env.PORT_HTTPS || 3543);
 
-const LAN_IP = (() => {
+// 收集本机所有可用的 IPv4 地址：排除回环、APIPA(169.254) 和虚拟网卡优先级的干扰
+function listLANAddrs() {
   const ifaces = os.networkInterfaces();
-  const order = ['en0', 'en1', 'en2', 'wlan0', 'eth0'];
-  for (const name of order) {
-    for (const ni of ifaces[name] || []) {
-      if (ni.family === 'IPv4' && !ni.internal) return ni.address;
+  const list = [];
+  for (const [name, items] of Object.entries(ifaces)) {
+    for (const ni of items || []) {
+      if (ni.family !== 'IPv4' || ni.internal) continue;
+      if (ni.address.startsWith('169.254.')) continue; // 未拿到 DHCP 时的占位地址
+      list.push({ name, address: ni.address });
     }
   }
-  for (const name of Object.keys(ifaces)) {
-    for (const ni of ifaces[name] || []) {
-      if (ni.family === 'IPv4' && !ni.internal) return ni.address;
-    }
-  }
-  return '127.0.0.1';
-})();
+  // 真实局域网网卡优先，VPN / 虚拟机 / 蓝牙网卡靠后
+  const rank = (n) => (/wlan|wi-?fi|无线|以太网|ethernet|^en\d|^eth\d/i.test(n) ? 0
+    : /vpn|virtual|vmware|tap|wintun|bluetooth|蓝牙/i.test(n) ? 2 : 1);
+  list.sort((a, b) => rank(a.name) - rank(b.name));
+  return list;
+}
+
+const LAN_ADDRS = listLANAddrs();
+
+const LAN_IP = (LAN_ADDRS[0] && LAN_ADDRS[0].address) || '127.0.0.1';
+
+// 手机体感需要安全上下文，必须 HTTPS：证书缺失时自动生成自签证书
+function ensureCerts() {
+  const dir = path.join(__dirname, 'certs');
+  const keyPath = path.join(dir, 'key.pem');
+  const certPath = path.join(dir, 'cert.pem');
+  if (fs.existsSync(keyPath) && fs.existsSync(certPath)) return { keyPath, certPath };
+  fs.mkdirSync(dir, { recursive: true });
+  const altNames = [
+    { type: 2, value: 'localhost' },
+    { type: 7, ip: '127.0.0.1' },
+    ...LAN_ADDRS.map((a) => ({ type: 7, ip: a.address })),
+  ];
+  return selfsigned.generate(
+    [{ name: 'commonName', value: LAN_IP }],
+    { days: 3650, keySize: 2048, algorithm: 'sha256', extensions: [{ name: 'subjectAltName', altNames }] },
+  ).then((pems) => {
+    fs.writeFileSync(keyPath, pems.private);
+    fs.writeFileSync(certPath, pems.cert);
+    console.log('[证书] 未找到证书，已生成自签证书 certs/key.pem / cert.pem');
+    return { keyPath, certPath };
+  });
+}
 
 // ---------- 3D 世界常量（单位：米）----------
 const HALF_W = 3.0;          // 场地半宽（x）
@@ -628,8 +658,15 @@ function handler(req, res) {
   let p = decodeURIComponent(url.pathname);
 
   if (p === '/api/net') {
+    const addrs = listLANAddrs(); // 实时读取：蓝牙网络共享等网卡可能刚连上
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
-    res.end(JSON.stringify({ lanIP: LAN_IP, http: HTTP_PORT, https: HTTPS_PORT }));
+    res.end(JSON.stringify({
+      lanIP: (addrs[0] && addrs[0].address) || LAN_IP,
+      http: HTTP_PORT,
+      https: HTTPS_PORT,
+      // 多网卡时列出全部候选地址，手机连不上可换一个试
+      addrs,
+    }));
     return;
   }
 
@@ -682,12 +719,13 @@ function handler(req, res) {
 const httpServer = http.createServer(handler);
 let httpsServer = null;
 try {
+  const { keyPath, certPath } = await ensureCerts();
   httpsServer = https.createServer({
-    key: fs.readFileSync(path.join(__dirname, 'certs/key.pem')),
-    cert: fs.readFileSync(path.join(__dirname, 'certs/cert.pem')),
+    key: fs.readFileSync(keyPath),
+    cert: fs.readFileSync(certPath),
   }, handler);
-} catch {
-  console.warn('[warn] 证书缺失，仅启动 HTTP');
+} catch (e) {
+  console.warn('[warn] 证书不可用，仅启动 HTTP：', e.message);
 }
 
 const io = new Server({ cors: { origin: '*' }, pingInterval: 8000, pingTimeout: 20000 });
@@ -887,6 +925,13 @@ httpServer.listen(HTTP_PORT, '0.0.0.0', () => {
   console.log(`  手机手柄   : https://${LAN_IP}:${HTTPS_PORT}/ctrl`);
   console.log(`  统计       : http://${LAN_IP}:${HTTP_PORT}/api/stats`);
   console.log('  ────────────────────────────────────────');
+  if (LAN_ADDRS.length > 1) {
+    console.log('  手机连不上时，可换下面任意一个地址试：');
+    for (const a of LAN_ADDRS) {
+      console.log(`    https://${a.address}:${HTTPS_PORT}/ctrl   [${a.name}]`);
+    }
+    console.log('  ────────────────────────────────────────');
+  }
   console.log('');
 });
 if (httpsServer) {
