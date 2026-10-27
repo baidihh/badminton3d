@@ -3,3 +3,5 @@ certs/
 .DS_Store
 *.log
 shots/
+data/sessions/*.jsonl
+data/labels/*.json

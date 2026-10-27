@@ -368,6 +368,11 @@ export class PlayerView {
     this.kneeW = new THREE.Vector3();
     this.footOffset = new THREE.Vector3();
     this.crouch = 0;
+    // 步法状态：启动步、交叉步
+    this.prevOnMy = false;
+    this.splitT = 0;
+    this.splitCool = 0;
+    this.stepPhase = 0;
   }
 
   addTo(scene) {
@@ -422,6 +427,20 @@ export class PlayerView {
     const leadX = this.root.position.x + mvx * 0.16;
     const leadZ = this.root.position.z + mvz * 0.16;
 
+    // 启动步：球刚过到自己这边时的小跳蓄力
+    const onMy = (p.z < 0) === (ball.z < 0) && Math.abs(ball.z) > 0.1;
+    this.splitCool = Math.max(0, this.splitCool - dt);
+    if (onMy && !this.prevOnMy && this.splitCool <= 0) {
+      this.splitT = 0.16;
+      this.splitCool = 0.8;
+    }
+    this.prevOnMy = onMy;
+    this.splitT = Math.max(0, this.splitT - dt);
+    const splitK = this.splitT > 0 ? Math.sin(Math.PI * (1 - this.splitT / 0.16)) : 0;
+
+    // 交叉步：大范围横移时，非持拍脚从身后交叉过去
+    const lateralFast = Math.abs(mlx) > 0.55 && Math.abs(mlx) > Math.abs(mlz) * 1.2;
+
     for (const key of ['right', 'left']) {
       const leg = this.legs[key];
       if (!leg.up || !leg.knee || !leg.foot) continue;
@@ -443,6 +462,17 @@ export class PlayerView {
           lz -= near * 0.10;
         }
       }
+      // 交叉步：非持拍脚从身后交叉过去，持拍脚只小幅跟进
+      if (lateralFast) {
+        if (isRacket) {
+          lx += mlx * 0.10;
+        } else {
+          lx += mlx * 0.60;
+          lz -= 0.18;
+        }
+      }
+      // 启动步：小跳时站位略宽
+      if (splitK > 0) lx += leg.side * 0.05 * splitK;
 
       const wx = leadX + sideV.x * lx + fwd.x * lz;
       const wz = leadZ + sideV.z * lx + fwd.z * lz;
@@ -472,7 +502,7 @@ export class PlayerView {
 
       // 腿部 IK：髋 → 踝，膝盖朝前
       const hip = leg.up.getWorldPosition(this.hipW);
-      this.ankleW.set(st.x, this.ankleY + st.lift, st.z);
+      this.ankleW.set(st.x, this.ankleY + st.lift + splitK * 0.05, st.z);
       // 够不到时贴着地面把脚拉近，避免脚悬空
       const maxR = leg.l1 + leg.l2 - 0.02;
       const dyA = this.ankleW.y - hip.y;

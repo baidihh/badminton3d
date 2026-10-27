@@ -5,7 +5,8 @@
   "type": "module",
   "description": "3D 体感羽毛球，支持单人/双人分屏",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "data:summary": "node data/tools/summarize.mjs"
   },
   "dependencies": {
     "qrcode": "^1.5.4",
