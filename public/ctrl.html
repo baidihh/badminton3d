@@ -4,10 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="theme-color" content="#04070c">
+<meta name="theme-color" content="#153f36">
 <link rel="icon" href="data:,">
-<title>3D 羽毛球 · 手机球拍</title>
+<title>COURTSIDE · 随身球拍</title>
 <link rel="stylesheet" href="/css/ctrl.css">
+<link rel="stylesheet" href="/css/training.css">
 </head>
 <body>
 
@@ -18,6 +19,9 @@
     <div class="badge slot" id="slotb">未分配</div>
     <button class="mini" id="replay">教学</button>
   </div>
+
+  <div id="phoneCharacter"></div>
+  <section id="trainingPanel" class="trainingPanel" aria-label="定点训练"></section>
 
   <div id="mirrorHome"></div>
 
@@ -94,6 +98,7 @@
 <div id="onboard">
   <!-- 1. 介绍 -->
   <div class="ob obIntro" id="obIntro">
+    <div class="controllerBrand">COURTSIDE <span>YOUR PHONE. YOUR RACQUET.</span></div>
     <div class="heroArt">
       <svg viewBox="0 0 360 180" width="100%" height="100%">
         <defs>
@@ -128,7 +133,7 @@
       </svg>
     </div>
     <h2>手机就是球拍</h2>
-    <p>手机机头指向哪里，球拍的初始位置就在哪里。<br>开局把手机摆成你习惯的击球准备姿势并确认，之后球拍实时跟着手机走。<br>正前方 180° 内挥拍，背后的动作会被忽略。</p>
+    <p>横向向左挥，球打向左侧；横向向右挥，球打向右侧。<br>直上直下挥默认打中路；横向幅度越大，落点越靠边。<br>人物自动跑位，挥拍后会有短暂收拍恢复。</p>
     <button class="primary" id="obEnable">开启体感</button>
     <div class="status" id="obStatus"></div>
     <button class="link hidden" id="obTap">传感器不可用？用触屏试玩</button>

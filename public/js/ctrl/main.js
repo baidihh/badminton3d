@@ -1,21 +1,25 @@
+import { mountCharacterPicker } from '../character-picker.js';
+import { getCharacter } from '../characters.js';
 // 手机手柄主流程：按键、校准、试挥、联机、渲染循环
 import * as THREE from 'three';
 import { clamp, D2R, R2D, X_AXIS } from './util.js';
-import { SENS, onOrientation, onMotion, getInvert, setInvert, setSwingHandler, setCalReadyHandler } from './sens.js';
+import { SENS, onOrientation, onMotion, getInvert, setInvert, setHoldingHand, setSwingHandler, setCalReadyHandler, getTrainingCapture } from './sens.js';
 import { mountMirror, renderMirror } from './mirror.js';
 import { drawAim, sizeAimCanvas } from './radar.js';
 import { ensureAudio, whoosh } from './audio.js';
 import { gate } from './gate.js';
+import { mountTrainingUI } from '../training-ui.js';
 
 const $ = (id) => document.getElementById(id);
 
-const SHOT_NAME = { clear: '高远球', drop: '吊球', smash: '杀球' };
+const SHOT_NAME = { clear: '高远球', drop: '吊球', smash: '杀球', drive: '被动抽球', slice: '反手切吊', net: '网前球' };
 const SHOT_CSS = { clear: '#BFE9FF', drop: '#7CFFB2', smash: '#FF9A7A' };
 const SHOT_HINT = {
   clear: '从低到高向上挥，送到后场',
   drop: '按住「吊球」再轻挥',
   smash: '先把拍头举高，再向下压',
 };
+let myCharacter = getCharacter(localStorage.getItem('bm3_character')).id;
 let myHand = localStorage.getItem('bm3_hand') === 'left' ? 'left' : 'right';
 // 网络往返延迟（毫秒），用于时间戳回溯的单程延迟估计
 let rttMs = 0;
@@ -24,6 +28,7 @@ let pingAt = 0;
 // 入场参数：持拍手 + 屏幕信息（服务端数据采集用）
 function joinPayload(extra = {}) {
   return {
+    characterId: myCharacter,
     hand: myHand,
     viewport: { w: innerWidth, h: innerHeight, dpr: devicePixelRatio || 1 },
     ...extra,
@@ -35,6 +40,58 @@ function joinPayload(extra = {}) {
 // ============================================================
 const socket = io({ transports: ['websocket', 'polling'] });
 let mySlot = null;
+const characterPicker = mountCharacterPicker($('phoneCharacter'), {
+  value: myCharacter,
+  onSelect: id => { myCharacter = id; localStorage.setItem('bm3_character', id); if (mySlot) socket.emit('ctrl:character', { characterId: id }); },
+});
+function confirmCharacter(id) {
+  const next = getCharacter(id).id;
+  if (myCharacter !== next) localStorage.setItem('bm3_character', next);
+  myCharacter = next;
+  characterPicker.setValue(myCharacter);
+}
+socket.on('character:selected', ({ characterId }) => confirmCharacter(characterId));
+let trainingState = null;
+let trainingSentAttempt = null;
+const trainingUI = mountTrainingUI($('trainingPanel'), {
+  onCommand: (event, payload) => socket.emit(event, payload),
+  onChange: (next) => {
+    const previous = trainingState;
+    trainingState = next;
+    if (!next || next.attemptId !== previous?.attemptId || next.status !== 'ready') trainingSentAttempt = null;
+    const active = !!next;
+    characterPicker.setDisabled(active);
+    $('app').classList.toggle('trainingActive', active);
+    for (const id of ['swap', 'replay', 'invert', 'handBtn']) $(id).disabled = active;
+    if (active) {
+      label.on = false;
+      $('labelPanel').classList.add('hidden');
+      $('mirrorHome').classList.remove('hidden');
+    }
+    if (!active && previous) sizeAimCanvas();
+  },
+});
+
+function updateTrainingContext() {
+  trainingUI.setContext({
+    connected: socket.connected,
+    canStart: state.step === 'play' && mySlot === 'left',
+    canControl: state.step === 'play' && mySlot === 'left',
+    hand: myHand === 'left' ? '左手持拍' : '右手持拍',
+    reason: mySlot === 'right' ? '当前为旁观：请用左边场地的手机进行训练' : '进入球场并连接左边场地后可开始',
+  });
+}
+
+function renderTrainingRing() {
+  if (!trainingState) return;
+  const ready = trainingState.status === 'ready' && !trainingSentAttempt && mySlot === trainingState.owner;
+  $tip.ring.className = 'ring' + (ready ? ' hot' : '');
+  $tip.label.textContent = '定点训练';
+  $tip.big.className = 'big' + (ready ? ' hot' : '');
+  $tip.big.textContent = trainingState.status === 'complete' ? '已完成' : ready ? '自然挥拍' : '看大屏';
+  $tip.hint.textContent = mySlot !== 'left' ? '等待训练中的玩家'
+    : trainingState.status === 'complete' ? '可重来或退出' : ready ? '朝提示目标打' : '等待下一拍';
+}
 
 // ============================================================
 // 标注模式：?label=1 打开，按提示挥拍，逐拍记录"要求球路 vs 实际判定"
@@ -49,6 +106,7 @@ const label = { on: false, seq: [], idx: 0, results: [], done: false };
 const LABEL_ROUNDS = 4;
 
 function startLabeling() {
+  if (trainingState) return;
   label.seq = [];
   for (let r = 0; r < LABEL_ROUNDS; r++) {
     label.seq.push(...['clear', 'drop', 'smash'].sort(() => Math.random() - 0.5));
@@ -101,18 +159,18 @@ function recordLabel(detected) {
 }
 
 function fire(power, dir, peak, lift = 0.45, swingStart, shot = 'clear', feat = null) {
+  if (trainingState && (trainingState.status !== 'ready' || mySlot !== trainingState.owner || trainingSentAttempt === trainingState.attemptId)) return;
   const now = performance.now();
   if (now - gate.lastSwingAt < 220) return;
   gate.lastSwingAt = now;
   gate.cooldownUntil = now + 240;
 
   // 标注模式：这一拍要求的球路（判对判错都记录）
-  const reqShot = (label.on && !label.done) ? label.seq[label.idx] : null;
+  const reqShot = (!trainingState && label.on && !label.done) ? label.seq[label.idx] : null;
 
-  // 出球方向用"角速度峰值那一刻"的方位角（此时拍面正对出球方向），
-  // 收拍后的方位会明显偏，不能代表意图
+  // 方位角只用于诊断；左右出球使用本次挥拍的横向转动 dir。
   const azOut = Number.isFinite(feat?.azAtPeak) ? feat.azAtPeak : (SENS.az || 0);
-  const dirShow = Math.abs(azOut) > 0.10 ? Math.sign(azOut) : 0;
+  const dirShow = Math.abs(dir) > 0.10 ? Math.sign(dir) : 0;
   // 从挥拍峰值到发出这一包的时间差：服务端据此把球回退到挥拍那一刻
   const ageMs = feat?.peakAt ? Math.max(0, Math.min(300, now - feat.peakAt)) : 0;
 
@@ -129,8 +187,8 @@ function fire(power, dir, peak, lift = 0.45, swingStart, shot = 'clear', feat = 
 
   if (state.step === 'trial') practiceSwing(swingStart || now, shot);
   if (state.step === 'play' && mySlot && socket.connected) {
-    // 出球方向用"角速度峰值那一刻"的方位角（此时拍面正对出球方向），
-    // 收拍后的方位会明显偏，不能代表意图
+    if (trainingState) trainingSentAttempt = trainingState.attemptId;
+    // 保留姿态数据供诊断，落点不再依赖绝对朝向。
     const azOut = Number.isFinite(feat?.azAtPeak) ? feat.azAtPeak : SENS.az;
     socket.emit('ctrl:swing', {
       power, dir, peak, lift, shot,
@@ -139,12 +197,15 @@ function fire(power, dir, peak, lift = 0.45, swingStart, shot = 'clear', feat = 
       el: SENS.el, om: SENS.omega,
       dropHold: SENS.dropHold, hand: myHand,
       requested: reqShot,
+      attemptId: trainingState?.attemptId,
+      sensorCapture: trainingState ? getTrainingCapture() : undefined,
       ageMs, rttMs,
       elStart: feat?.elStart ?? null,
       elMax: feat?.elMax ?? null,
       elMin: feat?.elMin ?? null,
       elAtPeak: feat?.elAtPeak ?? null,
       sweepDeg: feat?.sweep ?? null,
+      yawSweep: feat?.yawSweep ?? null,
     });
   }
   if (reqShot && state.step === 'play') recordLabel(shot);
@@ -393,7 +454,11 @@ function captureReference() {
   SENS.qRel.identity();
   SENS.qProj.identity();
   SENS.prevAim.set(0, 0, 1);
+  SENS.lastIntent = SENS.lastIntentAt = 0;
   SENS.rawAz = 0;
+  SENS.az = SENS.el = SENS.azF = SENS.elMed = 0;
+  SENS.azFInit = false;
+  SENS.azHist.length = SENS.omegaBuf.length = SENS.elBuf.length = 0;
   SENS.prevAzForSwing = SENS.az;
   SENS.swing = null;
   SENS.orientEventT = 0;
@@ -598,9 +663,11 @@ function startPlay() {
   startPoseSender();
   keepAwake();
   if (LABEL_MODE) startLabeling();
+  updateTrainingContext();
 }
 
 $('replay').onclick = () => {
+  if (trainingState) return;
   state.step = 'trial';
   $('app').classList.add('hidden');
   $('onboard').classList.remove('hide');
@@ -637,22 +704,34 @@ socket.on('connect', () => {
   $('dot').className = 'dot live';
   $('stat').textContent = '已连接';
   if (state.step === 'play') socket.emit('ctrl:join', joinPayload());
+  updateTrainingContext();
 });
 socket.on('disconnect', () => {
+  mySlot = null;
   $('dot').className = 'dot';
   $('stat').textContent = '连接断开';
+  updateTrainingContext();
 });
-socket.on('ctrl:joined', ({ slot }) => {
+socket.on('ctrl:joined', ({ slot, characterId }) => {
+  confirmCharacter(characterId);
   mySlot = slot;
   const el = $('slotb');
   el.textContent = slot === 'left' ? '左边场地' : '右边场地';
   el.className = 'badge slot ' + slot;
+  updateTrainingContext();
 });
 socket.on('ctrl:full', () => {
+  mySlot = null;
   $('stat').textContent = '场地已满';
   $('dot').className = 'dot';
+  updateTrainingContext();
 });
-socket.on('ctrl:released', () => { mySlot = null; $('slotb').textContent = '被接管'; });
+socket.on('ctrl:released', () => { mySlot = null; $('slotb').textContent = '被接管'; updateTrainingContext(); });
+socket.on('training:state', (training) => { trainingUI.setState(training); renderTrainingRing(); });
+socket.on('training:error', (error) => {
+  trainingSentAttempt = null;
+  trainingUI.error(error?.message || String(error || '训练操作失败'));
+});
 
 // 网络延迟测量：服务端立刻回包；单程延迟 = RTT / 2
 setInterval(() => {
@@ -669,6 +748,7 @@ socket.on('ctrl:pong', () => {
 
 // 服务端反馈：命中质量 / 漏击
 socket.on('ctrl:hit', ({ grade, shot }) => {
+  if (trainingState) return;
   hitFlashUntil = performance.now() + 420;
   const txt = grade === 'perfect' ? '完美甜区' : grade === 'good' ? '好球' : '擦边';
   const sn = SHOT_NAME[shot] || '';
@@ -687,11 +767,12 @@ socket.on('ctrl:hit', ({ grade, shot }) => {
 });
 const MISS_TIP = {
   high: ['球还高', '等它下落再挥'],
-  far: ['够不到', '往球的落点走一步'],
+  far: ['够不到', '角色会自动跑位，途中少挥空拍'],
   late: ['慢了一点', '球已过身，再早一点'],
   early: ['早了一点', '球到身边再挥'],
 };
 socket.on('ctrl:miss', ({ reason } = {}) => {
+  if (trainingState) return;
   const tip = MISS_TIP[reason] || MISS_TIP.early;
   missFlashUntil = performance.now() + 1200;
   $tip.big.textContent = tip[0];
@@ -702,6 +783,9 @@ socket.on('ctrl:miss', ({ reason } = {}) => {
 
 socket.on('ctrl:tick', (s) => {
   lastState = s;
+  if (mySlot && s[mySlot === 'left' ? 'l' : 'r']?.characterId) confirmCharacter(s[mySlot === 'left' ? 'l' : 'r'].characterId);
+  if ('training' in s) trainingUI.setState(s.training);
+  if (trainingState) { renderTrainingRing(); return; }
   const me = mySlot === 'left' ? s.l : s.r;
   const other = mySlot === 'left' ? s.r : s.l;
   if (!me || !other) return;
@@ -719,7 +803,8 @@ socket.on('ctrl:tick', (s) => {
   }
 
   const onMine = mySlot === 'left' ? s.bz < 0 : s.bz > 0;
-  const d = Math.hypot(s.bx - me.x, s.by - me.y, s.bz - me.z);
+  const racketZ = me.z + (mySlot === 'left' ? 0.55 : -0.55);
+  const d = Math.hypot(s.bx - me.x, s.by - me.y, s.bz - racketZ);
 
   if (s.phase === 'over') {
     $tip.ring.className = 'ring';
@@ -733,7 +818,13 @@ socket.on('ctrl:tick', (s) => {
     $tip.big.textContent = '挥拍';
     $tip.big.className = 'big hot';
     $tip.hint.textContent = '把球打过网';
-  } else if (s.phase === 'rally' && onMine && d < 2.2) {
+  } else if (s.phase === 'rally' && me.recovering && !(onMine && d < 0.98)) {
+    $tip.ring.className = 'ring';
+    $tip.label.textContent = '跑位';
+    $tip.big.textContent = '收拍恢复';
+    $tip.big.className = 'big';
+    $tip.hint.textContent = '连续挥空会耽误接球';
+  } else if (s.phase === 'rally' && onMine && d < 0.98) {
     $tip.ring.className = 'ring hot';
     $tip.label.textContent = '击球';
     $tip.big.textContent = '现在挥';
@@ -752,6 +843,7 @@ socket.on('ctrl:tick', (s) => {
 // 按钮 / 触屏兜底
 // ============================================================
 $('swap').onclick = () => {
+  if (trainingState) return;
   mySlot = mySlot === 'left' ? 'right' : 'left';
   socket.emit('ctrl:join', joinPayload({ slot: mySlot }));
   if (navigator.vibrate) navigator.vibrate(16);
@@ -759,6 +851,7 @@ $('swap').onclick = () => {
 
 // 持拍手：决定吊球键在左/右，并同步给大屏 3D 人物
 function applyHandUI() {
+  setHoldingHand(myHand);
   const right = myHand === 'right';
   $('handBtn').textContent = right ? '右手持拍' : '左手持拍';
   $('handBtn').classList.toggle('handOn', !right);
@@ -771,6 +864,7 @@ $('handBtn').onclick = () => {
   myHand = myHand === 'right' ? 'left' : 'right';
   localStorage.setItem('bm3_hand', myHand);
   applyHandUI();
+  updateTrainingContext();
   if (navigator.vibrate) navigator.vibrate(16);
 };
 applyHandUI();
@@ -863,7 +957,9 @@ $('ring').addEventListener('click', () => {
   if (SENS.tapMode && state.step === 'trial') practiceSwing(performance.now());
 });
 
-document.addEventListener('touchmove', (e) => e.preventDefault(), { passive: false });
+document.addEventListener('touchmove', (e) => {
+  if (!trainingState || !(e.target instanceof Element) || !e.target.closest('#app')) e.preventDefault();
+}, { passive: false });
 document.addEventListener('gesturestart', (e) => e.preventDefault());
 
 // ============================================================

@@ -1,6 +1,13 @@
+import { applyCoastalArena } from './coastal-arena.js';
+import { mountGameExperience } from './game-experience.js';
+import { getCharacter } from './characters.js';
+import { CharacterSlot, cachedLoader } from './character-slot.js';
+import { mountCharacterPicker } from './character-picker.js';
+import { isCharacterId } from './characters.js';
 // 大屏渲染：球场、角色、球与特效、HUD、主循环
 import * as THREE from 'three';
 import { PlayerView, loadPlayerGLTF } from './player.js';
+import { mountTrainingUI } from './training-ui.js';
 
 // ============================================================
 // 世界常量（与服务器一致）
@@ -319,6 +326,59 @@ outer.position.y = -0.012;
 outer.receiveShadow = true;
 scene.add(outer);
 
+// 定点训练：金色目标区与蓝色站位保持不同编码，白圈只表示实际落点。
+const trainingMarkers = new THREE.Group();
+trainingMarkers.visible = false;
+scene.add(trainingMarkers);
+const trainingTarget = new THREE.Mesh(
+  new THREE.PlaneGeometry(1, 1),
+  new THREE.MeshBasicMaterial({ color: 0xf8d477, transparent: true, opacity: 0.36, depthWrite: false, side: THREE.DoubleSide })
+);
+trainingTarget.rotation.x = -Math.PI / 2;
+trainingMarkers.add(trainingTarget);
+const trainingBorder = new THREE.LineLoop(
+  new THREE.BufferGeometry().setFromPoints([
+    new THREE.Vector3(-0.5, 0, -0.5), new THREE.Vector3(0.5, 0, -0.5),
+    new THREE.Vector3(0.5, 0, 0.5), new THREE.Vector3(-0.5, 0, 0.5),
+  ]),
+  new THREE.LineBasicMaterial({ color: 0xffe5a6 })
+);
+trainingMarkers.add(trainingBorder);
+const trainingStance = new THREE.Mesh(
+  new THREE.RingGeometry(0.38, 0.44, 48),
+  new THREE.MeshBasicMaterial({ color: 0x7be2ff, side: THREE.DoubleSide })
+);
+trainingStance.rotation.x = -Math.PI / 2;
+trainingMarkers.add(trainingStance);
+const trainingArrow = new THREE.ArrowHelper(new THREE.Vector3(0, 0, 1), new THREE.Vector3(), 4, 0xf8d477, 0.45, 0.28);
+trainingMarkers.add(trainingArrow);
+const trainingLanding = new THREE.Mesh(
+  new THREE.RingGeometry(0.15, 0.23, 40),
+  new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide })
+);
+trainingLanding.rotation.x = -Math.PI / 2;
+trainingMarkers.add(trainingLanding);
+const trainingDirection = new THREE.Vector3();
+
+function updateTrainingMarkers(training) {
+  trainingMarkers.visible = !!training?.active;
+  if (!training) return;
+  const { target, stance, result } = training;
+  trainingTarget.position.set(target.x, 0.025, target.z);
+  trainingTarget.scale.set(target.halfWidth * 2, target.halfDepth * 2, 1);
+  trainingBorder.position.set(target.x, 0.035, target.z);
+  trainingBorder.scale.set(target.halfWidth * 2, 1, target.halfDepth * 2);
+  trainingStance.position.set(stance.x, 0.035, stance.z);
+  trainingArrow.position.set(stance.x, 0.06, stance.z + 0.5);
+  trainingDirection.set(target.x - stance.x, 0, target.z - stance.z - 0.5);
+  const length = trainingDirection.length();
+  trainingArrow.setDirection(trainingDirection.normalize());
+  trainingArrow.setLength(Math.max(0.5, length - target.halfDepth - 0.15), 0.45, 0.28);
+  trainingArrow.visible = training.status === 'ready';
+  trainingLanding.visible = !!result?.actual && result.outcome === 'landed';
+  if (trainingLanding.visible) trainingLanding.position.set(result.actual.x, 0.05, result.actual.z);
+}
+
 // 球网 + 网柱
 const netMat = new THREE.MeshStandardMaterial({
   map: netTexture(), transparent: true, alphaTest: 0.02,
@@ -348,27 +408,33 @@ for (const x of [-3.08, 3.08]) {
   scene.add(base);
 }
 
+applyCoastalArena({scene,renderer,floor,outer,key,rim,warm,netMesh,netTape});
+
 // 角色（GLB 骨骼模型 + 动画混合 + IK 覆盖）
 // ============================================================
 const shadowTex = shadowTexture();
-const MODEL_URL = '/models/Xbot.glb';
 let p1view = null, p2view = null;
+const loadCharacter = cachedLoader(loadPlayerGLTF);
+const characterStatus = {};
+const characterSlots = Object.fromEntries(['left', 'right'].map((side, i) => [side, new CharacterSlot({
+  load: loadCharacter,
+  create: (gltf, character) => new PlayerView(gltf, { character, accent: i ? 0xFF8268 : 0x3FD0FF, shadowTex }),
+  attach: view => view.addTo(scene),
+  detach: view => { scene.remove(view.root, view.blob); },
+  onStatus: status => {
+    characterStatus[side] = status;
+    const values = Object.values(characterStatus), tip = document.getElementById('modelTip');
+    if (!tip) return;
+    const loading = values.some(s => s.state === 'loading');
+    const failed = values.some(s => s.state === 'error' || s.state === 'fallback');
+    tip.classList.toggle('off', !loading && !failed);
+    tip.textContent = loading ? '角色加载中…' : failed ? '角色加载失败，已保留可用运动员。可重新选择角色。' : '';
+  },
+})]));
+characterSlots.left.select('athlete');
+characterSlots.right.select('athlete');
 
-loadPlayerGLTF(MODEL_URL)
-  .then((gltf) => {
-    p1view = new PlayerView(gltf, { accent: 0x3FD0FF, shadowTex });
-    p2view = new PlayerView(gltf, { accent: 0xFF8268, shadowTex });
-    p1view.addTo(scene);
-    p2view.addTo(scene);
-    const tip = document.getElementById('modelTip');
-    if (tip) tip.classList.add('off');
-  })
-  .catch((err) => {
-    console.error('[GLB] 加载失败', err);
-    const tip = document.getElementById('modelTip');
-    if (tip) tip.textContent = '模型加载失败：' + (err && err.message ? err.message : err);
-  });
-
+// ============================================================
 // 拖尾 / 球影 / 击球特效
 const TRAIL_N = 26;
 const trailPos = new Float32Array(TRAIL_N * 3);
@@ -510,6 +576,7 @@ let prevMsg = '';
 let prevBallZ = 0;
 let lastBallState = null;
 let lastImpactId = 0;
+let lastImpactAt = 0;
 let shake = 0, hitStop = 0, netWobble = 0;
 let shakeX = 0, shakeZ = 0;
 let soundOn = true;
@@ -522,8 +589,53 @@ const gradeEl = $('grade');
 let toastTimer = 0, gradeTimer = 0;
 
 const socket = io();
+let experience = null;
+const screenPickers = { left: [], right: [] };
+for (const container of [$('startCharacters'), $('screenCharacters')]) {
+  for (const side of ['left', 'right']) screenPickers[side].push(mountCharacterPicker(container, {
+    label: side === 'left' ? '玩家 1' : '玩家 2 / 电脑',
+    onSelect: characterId => {socket.emit('game:character', { side, characterId });document.activeElement?.blur();},
+  }));
+}
+$('bchar').onclick = () => { $('characterPanel').hidden = !$('characterPanel').hidden; };
+
+let trainingState = null;
+const trainingUI = mountTrainingUI($('trainingPanel'), {
+  onCommand: (event, payload) => socket.emit(event, payload),
+  onChange: (next) => {
+    trainingState = next;
+    const active = !!next;
+    for (const pickers of Object.values(screenPickers)) for (const picker of pickers) picker.setDisabled(active || !socket.connected);
+    document.body.classList.toggle('trainingActive', active);
+    if (active) { $('start').classList.add('off'); experience?.training(); }
+    for (const id of ['b1', 'b2', 'brs']) $(id).disabled = active;
+    document.querySelectorAll('button.diff').forEach((button) => { button.disabled = active; });
+    if (active && twoPlayer) { twoPlayer = false; layout(); }
+    updateTrainingMarkers(next);
+    updateTrainingContext();
+  },
+});
+
+function updateTrainingContext() {
+  const canStart = !!S?.left.connected;
+  trainingUI.setContext({
+    connected: socket.connected, canStart, canControl: true,
+    reason: '先用手机加入左边场地，再开始定点训练',
+    hand: S?.left.hand === 'left' ? '左手持拍' : '右手持拍',
+  });
+  $('btrain').disabled = !socket.connected || !canStart || !!trainingState;
+  $('btrain').title = canStart ? '固定站位，先看目标再挥拍，共 6 拍' : '请先连接左边场地的手机';
+  $('btrain').classList.toggle('on', !!trainingState);
+}
+socket.on('training:state', (training) => trainingUI.setState(training));
+socket.on('training:error', (error) => trainingUI.error(error?.message || String(error || '训练操作失败')));
+socket.on('disconnect', () => { experience?.disconnect(); updateTrainingContext(); for (const pickers of Object.values(screenPickers)) for (const picker of pickers) picker.setDisabled(true); });
 
 socket.on('state', (s) => {
+  for (const side of ['left', 'right']) {
+    characterSlots[side].select(s[side].characterId);
+    for (const picker of screenPickers[side]) { picker.setValue(s[side].characterId); picker.setDisabled(!!trainingState || !socket.connected); }
+  }
   const first = !S;
   if (first) {
     smoothBall = { ...s.ball };
@@ -533,6 +645,10 @@ socket.on('state', (s) => {
     camR.position.set(s.right.x * 0.55, 3.85, BASE_Z + 6.2);
   }
   S = s;
+  $('bbackhand').disabled = !s.right.ai || !!s.training || (s.backhandFeed && (s.phase === 'rally' || (s.left.rearMove && !s.left.rearMove.done)));
+  experience?.update(s);
+  if ('training' in s) trainingUI.setState(s.training);
+  updateTrainingContext();
 
   // 发球/重开时球会瞬移，必须同步清理拖尾，避免跨场白线
   if (lastBallState) {
@@ -554,7 +670,7 @@ socket.on('state', (s) => {
   lastBallState = { x: s.ball.x, y: s.ball.y, z: s.ball.z };
 
   // 大屏可能是在第二部手机接入后才打开，这里补一次自动分屏
-  if (!twoPlayer && !s.right.ai && s.right.connected) {
+  if (!trainingState && !twoPlayer && !s.right.ai && s.right.connected) {
     twoPlayer = true;
     layout();
     $('b1').classList.remove('on');
@@ -572,6 +688,7 @@ socket.on('state', (s) => {
 
   if ((s.impact.id || 0) !== lastImpactId) {
     lastImpactId = s.impact.id || 0;
+    lastImpactAt = performance.now();
     triggerImpact(s.impact);
   }
 
@@ -584,7 +701,7 @@ socket.on('state', (s) => {
 });
 
 socket.on('mode:set', ({ twoPlayer: tp }) => {
-  twoPlayer = !!tp;
+  twoPlayer = !trainingState && !!tp;
   layout();
   $('b1').classList.toggle('on', !twoPlayer);
   $('b2').classList.toggle('on', twoPlayer);
@@ -596,12 +713,14 @@ function showToast(t) {
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => toastEl.classList.remove('on'), 1000);
 }
-const SHOT_NAME = { clear: '高远球', drop: '吊球', smash: '杀球' };
-const SHOT_TAG = { clear: '高远', drop: '吊球', smash: '杀球' };
+const SHOT_NAME = { clear: '高远球', drop: '吊球', smash: '杀球', drive: '被动抽球', slice: '反手切吊' };
+const SHOT_TAG = { clear: '高远', drop: '吊球', smash: '杀球', drive: '被动抽球', slice: '反手切吊' };
 const SHOT_COLOR = {
   clear: new THREE.Color(0xbfe8ff),
   drop: new THREE.Color(0x7cffb2),
   smash: new THREE.Color(0xff8a5c),
+  drive: new THREE.Color(0x8cdfff),
+  slice: new THREE.Color(0xd4f68e),
 };
 
 function setShotTag(side, shot) {
@@ -628,7 +747,7 @@ function triggerImpact(imp) {
   if (!imp) return;
   const power = clamp(imp.power || 0.5, 0, 1);
   const shot = SHOT_TAG[imp.shot] ? imp.shot : 'clear';
-  const col = SHOT_COLOR[shot];
+  const col = SHOT_COLOR[shot] || SHOT_COLOR.clear;
 
   // 球路视觉编码：高远=冷蓝，吊球=青绿，杀球=橙红
   trailLine.material.color.copy(col);
@@ -788,9 +907,12 @@ const tmpQ = new THREE.Quaternion();
 const tmpE = new THREE.Euler();
 
 function updatePlayers(dt) {
+  p1view = characterSlots.left.view;
+  p2view = characterSlots.right.view;
   if (!S) return;
-  if (p1view) p1view.update(dt, S.left, smoothBall);
-  if (p2view) p2view.update(dt, S.right, smoothBall);
+  const cue=side=>({phase:S.phase,opponentImpactId:S.phase==='rally' && S.impact?.side && S.impact.side!==side ? S.impact.id : undefined,opponentImpactAge:lastImpactAt ? (performance.now()-lastImpactAt)/1000 : Infinity});
+  if (p1view) p1view.update(dt, S.left, smoothBall, cue('left'));
+  if (p2view) p2view.update(dt, S.right, smoothBall, cue('right'));
 }
 
 // ============================================================
@@ -859,8 +981,13 @@ let hudTick = 0;
 function updateHud(s) {
   $('sL').textContent = s.left.score;
   $('sR').textContent = s.right.score;
-  $('nL').textContent = s.left.name || '玩家 1';
-  $('nR').textContent = s.right.name || '电脑';
+  const leftRole=getCharacter(s.left.characterId), rightRole=getCharacter(s.right.characterId);
+  $('nL').textContent = leftRole.name;
+  $('nR').textContent = (s.right.ai ? '电脑 · ' : '') + rightRole.name;
+  for (const [id,role] of [['hudAvatarL',leftRole],['hudAvatarR',rightRole]]) {
+    const image=$(id), source=role.thumbnail || `/images/characters/${role.id}.png`;
+    if(image.getAttribute('src')!==source){image.src=source;image.alt=role.name;}
+  }
   $('dotL').className = 'dot' + (s.left.connected ? ' live' : '');
   $('dotR').className = 'dot' + (!s.right.ai && s.right.connected ? ' live' : '');
   $('rally').textContent = 'RALLY ' + (s.rally || 0);
@@ -870,7 +997,7 @@ function updateHud(s) {
   $('phoneDot').className = 'dot' + (phoneLive ? ' live' : '');
   $('phoneTxt').textContent = phoneLive
     ? (s.left.pose ? '手机已就绪' : '手机已连接')
-    : '手机未连接';
+    : experience?.control === 'keyboard' ? '键盘已就绪' : '手机未连接';
   $('startDot').className = 'dot' + (phoneLive ? ' live' : '');
   $('startPhoneTxt').textContent = phoneLive
     ? '手机已连接 · 可以开始'
@@ -902,12 +1029,12 @@ function updateHud(s) {
     $('kR').textContent = `右边 · ${s.right.name}${s.right.connected ? ' 已连接' : ' 未连接（可用回车）'}`;
   }
 
-  const ready = !s.started;
+  const ready = !s.started || s.phase === 'serve';
   $('ready').classList.toggle('on', ready);
   if (ready) {
-    $('ready').textContent = s.left.connected
-      ? '手机已就绪 · 挥拍开始'
-      : '按空格开始 · 或扫码用手机挥拍';
+    $('ready').textContent = s.started && s.server === 'right'
+      ? (s.right.ai ? '对方发球 · 准备接球' : '玩家 2 发球 · 按回车或挥动手机')
+      : s.left.connected ? '轮到你发球 · 挥动手机开始' : '轮到你发球 · 按空格开始';
   }
 
   const nearL = s.ball.z < 0 && Math.hypot(s.ball.x - s.left.x, s.ball.y - s.left.y, s.ball.z - s.left.z) < 1.75;
@@ -931,6 +1058,7 @@ function layout() {
 addEventListener('resize', layout);
 
 function setMode(tp) {
+  if (trainingState) return;
   twoPlayer = tp;
   layout();
   socket.emit('game:mode', { ai: !tp });
@@ -947,8 +1075,8 @@ function frame(now) {
   const rawDt = Math.min((now - lastT) / 1000, 0.05);
   lastT = now;
 
-  // 顿帧：击球瞬间整个世界慢下来，力量感更真实
-  const dt = hitStop > 0 ? rawDt * 0.18 : rawDt;
+  // 对局位置始终按真实时间推进，顿帧仅用于特效，避免视觉接球窗口漂移。
+  const dt = rawDt;
   timeAcc += dt;
 
   if (S) {
@@ -972,6 +1100,7 @@ function frame(now) {
 
   updateFx(rawDt);
 
+  if (experience && experience.page !== 'match' && experience.page !== 'result') { requestAnimationFrame(frame); return; }
   const w = innerWidth, h = innerHeight;
   if (twoPlayer) {
     const hw = Math.floor(w / 2);
@@ -1009,19 +1138,21 @@ requestAnimationFrame(frame);
 const pressed = new Set();
 let dir1 = 0, dir2 = 0;
 addEventListener('keydown', (e) => {
+  if (e.target instanceof HTMLElement && e.target.closest('button, input, select, textarea, [contenteditable]')) return;
+  if (trainingState || !experience?.inMatch) return;
   const k = e.key.toLowerCase();
   if (e.code === 'Space') {
     e.preventDefault();
     if (!pressed.has('space')) {
       pressed.add('space');
-      socket.emit('game:swing', { side: 'left', power: 0.55 + Math.random() * 0.4, dir: dir1 });
+      socket.emit('game:swing', { side: 'left', power: e.shiftKey ? .46 : .82, dir: dir1, shot: e.shiftKey ? 'drop' : e.altKey ? 'smash' : 'clear' });
     }
   }
   if (e.code === 'Enter') {
     e.preventDefault();
     if (!pressed.has('enter')) {
       pressed.add('enter');
-      socket.emit('game:swing', { side: 'right', power: 0.55 + Math.random() * 0.4, dir: dir2 });
+      socket.emit('game:swing', { side: 'right', power: e.shiftKey ? .46 : .82, dir: dir2, shot: e.shiftKey ? 'drop' : e.altKey ? 'smash' : 'clear' });
     }
   }
   pressed.add(k);
@@ -1055,11 +1186,18 @@ document.querySelectorAll('button.diff').forEach((b) => {
   };
 });
 paintDiff();
-socket.on('connect', () => socket.emit('game:difficulty', { level: aiLevel }));
+socket.on('connect', () => {
+  socket.emit('screen:join');
+  experience?.connect();
+  socket.emit('game:difficulty', { level: aiLevel });
+  updateTrainingContext();
+});
 
 $('b1').onclick = () => setMode(false);
 $('b2').onclick = () => setMode(true);
 $('brs').onclick = () => socket.emit('game:restart');
+$('bbackhand').onclick = () => socket.emit('game:backhand-feed', { auto: false });
+$('btrain').onclick = () => trainingUI.start();
 $('bqr').onclick = () => {
   // 每次打开都重新读网卡：蓝牙网络共享可能刚连上
   if ($('qrPanel').classList.toggle('on')) loadQr();
@@ -1126,3 +1264,32 @@ function loadQr() {
     .catch(() => {});
 }
 loadQr();
+
+// Integrated lobby / role selection / setup / match / results.
+function openHelp(){const dialog=$('howToPlay');if(!dialog.open)dialog.showModal();}
+$('closeHelp').onclick=$('helpGotIt').onclick=()=>$('howToPlay').close();
+$('howToPlay').addEventListener('click',e=>{if(e.target===$('howToPlay'))$('howToPlay').close();});
+$('courtConnect').onclick=()=>{if(!$('qrPanel').classList.contains('on'))$('bqr').click();else $('qrPanel').classList.remove('on');};
+experience=mountGameExperience({
+  load:loadCharacter,
+  isConnected:()=>socket.connected,
+  assetReady:id=>characterSlots.left.view?.id===id && characterStatus.left?.state==='ready',
+  requestCharacter:(side,characterId)=>socket.emit('game:character',{side,characterId}),
+  onEnter:({mode,backhand})=>{
+    pressed.clear();dir1=dir2=0;
+    if(trainingState)socket.emit('training:stop');
+    setMode(mode==='duo');
+    const rival = getCharacter(S?.right.characterId).id;
+    if(mode==='solo' && rival==='athlete')socket.emit('game:character',{side:'right',characterId:'dino'});
+    socket.emit('game:difficulty',{level:aiLevel});socket.emit('game:restart');
+    if (backhand) socket.emit('game:backhand-feed', { auto: true });
+    $('qrPanel').classList.remove('on');$('characterPanel').hidden=true;ensureAudio();
+  },
+  onLobby:()=>{pressed.clear();dir1=dir2=0;if(trainingState)socket.emit('training:stop');},
+  onHelp:openHelp,
+});
+if(socket.connected){socket.emit('screen:join');experience.connect();}
+if(S)experience.update(S);
+window.addEventListener('blur',()=>{pressed.clear();dir1=dir2=0;});
+
+document.querySelector('.bar').addEventListener('click',()=>document.activeElement?.blur());

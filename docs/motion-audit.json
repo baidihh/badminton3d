@@ -1,0 +1,164 @@
+[
+  {
+    "driver": "before",
+    "fps": 30,
+    "speed": 0,
+    "meanStanceSlipMm": 0.05755388224906431,
+    "maxStanceSlipMm": 0.5505503329381124,
+    "stanceSamples": 208,
+    "bothAirFrames": 0
+  },
+  {
+    "driver": "before",
+    "fps": 30,
+    "speed": 1.6,
+    "meanStanceSlipMm": 33.532276603259774,
+    "maxStanceSlipMm": 88.61979199031667,
+    "stanceSamples": 94,
+    "bothAirFrames": 0
+  },
+  {
+    "driver": "before",
+    "fps": 30,
+    "speed": 3.6,
+    "meanStanceSlipMm": 79.11548976584258,
+    "maxStanceSlipMm": 168.63966202728196,
+    "stanceSamples": 42,
+    "bothAirFrames": 23
+  },
+  {
+    "driver": "before",
+    "fps": 60,
+    "speed": 0,
+    "meanStanceSlipMm": 0.028701709044029917,
+    "maxStanceSlipMm": 0.2755131177505138,
+    "stanceSamples": 418,
+    "bothAirFrames": 0
+  },
+  {
+    "driver": "before",
+    "fps": 60,
+    "speed": 1.6,
+    "meanStanceSlipMm": 16.443401794103604,
+    "maxStanceSlipMm": 40.510496883867475,
+    "stanceSamples": 180,
+    "bothAirFrames": 11
+  },
+  {
+    "driver": "before",
+    "fps": 60,
+    "speed": 3.6,
+    "meanStanceSlipMm": 33.94102239385363,
+    "maxStanceSlipMm": 90.17000844080476,
+    "stanceSamples": 83,
+    "bothAirFrames": 92
+  },
+  {
+    "driver": "before",
+    "fps": 120,
+    "speed": 0,
+    "meanStanceSlipMm": 0.014332274682018347,
+    "maxStanceSlipMm": 0.13781301742641297,
+    "stanceSamples": 838,
+    "bothAirFrames": 0
+  },
+  {
+    "driver": "before",
+    "fps": 120,
+    "speed": 1.6,
+    "meanStanceSlipMm": 8.426578079878997,
+    "maxStanceSlipMm": 20.381567947296617,
+    "stanceSamples": 380,
+    "bothAirFrames": 21
+  },
+  {
+    "driver": "before",
+    "fps": 120,
+    "speed": 3.6,
+    "meanStanceSlipMm": 17.01813648104272,
+    "maxStanceSlipMm": 42.48815551718613,
+    "stanceSamples": 176,
+    "bothAirFrames": 217
+  },
+  {
+    "driver": "after",
+    "fps": 30,
+    "speed": 0,
+    "meanStanceSlipMm": 0.000053779925198035244,
+    "maxStanceSlipMm": 0.00018185319035540548,
+    "stanceSamples": 208,
+    "bothAirFrames": 0
+  },
+  {
+    "driver": "after",
+    "fps": 30,
+    "speed": 1.6,
+    "meanStanceSlipMm": 0.000030353147708107676,
+    "maxStanceSlipMm": 0.00007914636561216418,
+    "stanceSamples": 101,
+    "bothAirFrames": 0
+  },
+  {
+    "driver": "after",
+    "fps": 30,
+    "speed": 3.6,
+    "meanStanceSlipMm": 0.0000383344131298111,
+    "maxStanceSlipMm": 0.0001276941046119186,
+    "stanceSamples": 96,
+    "bothAirFrames": 0
+  },
+  {
+    "driver": "after",
+    "fps": 60,
+    "speed": 0,
+    "meanStanceSlipMm": 0.00002868737985156965,
+    "maxStanceSlipMm": 0.00015768119877197174,
+    "stanceSamples": 418,
+    "bothAirFrames": 0
+  },
+  {
+    "driver": "after",
+    "fps": 60,
+    "speed": 1.6,
+    "meanStanceSlipMm": 0.000017214998842260477,
+    "maxStanceSlipMm": 0.00006435514736605651,
+    "stanceSamples": 212,
+    "bothAirFrames": 0
+  },
+  {
+    "driver": "after",
+    "fps": 60,
+    "speed": 3.6,
+    "meanStanceSlipMm": 0.00002660989874010708,
+    "maxStanceSlipMm": 0.0001008218570055966,
+    "stanceSamples": 191,
+    "bothAirFrames": 0
+  },
+  {
+    "driver": "after",
+    "fps": 120,
+    "speed": 0,
+    "meanStanceSlipMm": 0.000015082803572752929,
+    "maxStanceSlipMm": 0.00014392535333467469,
+    "stanceSamples": 838,
+    "bothAirFrames": 0
+  },
+  {
+    "driver": "after",
+    "fps": 120,
+    "speed": 1.6,
+    "meanStanceSlipMm": 0.000009454080974666584,
+    "maxStanceSlipMm": 0.00005511619934683951,
+    "stanceSamples": 437,
+    "bothAirFrames": 0
+  },
+  {
+    "driver": "after",
+    "fps": 120,
+    "speed": 3.6,
+    "meanStanceSlipMm": 0.000015059862366904024,
+    "maxStanceSlipMm": 0.00007435952273470407,
+    "stanceSamples": 419,
+    "bothAirFrames": 0
+  }
+]
