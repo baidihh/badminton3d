@@ -6,7 +6,15 @@
   "description": "3D 体感羽毛球，支持单人/双人分屏",
   "scripts": {
     "start": "node server.js",
-    "data:summary": "node data/tools/summarize.mjs"
+    "data:summary": "node data/tools/summarize.mjs",
+    "test": "node --test test/*.test.js",
+    "characters:build": "node tools/build-roster.mjs",
+    "characters:build:lingchuan": "node tools/build-roster.mjs young-man",
+    "test:characters:browser": "node test/browser/characters.cjs",
+    "test:game:browser": "node test/browser/game-experience.cjs",
+    "motion:sync": "node tools/sync-motion.mjs",
+    "motion:watch": "node tools/sync-motion.mjs --watch",
+    "dev:motion": "node tools/sync-motion.mjs --serve"
   },
   "dependencies": {
     "qrcode": "^1.5.4",

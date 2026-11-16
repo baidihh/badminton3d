@@ -17,24 +17,22 @@ export function integrate(b, dt) {
 }
 
 /** 用给定初速度模拟 T 秒，返回落点与过网高度 */
-export function simBall(x0, y0, z0, vx, vy, vz, T, steps = 36) {
-  const h = T / steps;
-  let x = x0, y = y0, z = z0;
+export function simBall(x0, y0, z0, vx, vy, vz, T) {
+  const b = { x: x0, y: y0, z: z0, vx, vy, vz };
   let yNet = null;
-  for (let i = 0; i < steps; i++) {
-    const sp = Math.hypot(vx, vy, vz);
-    const k = DRAG * sp;
-    vx -= k * vx * h;
-    vy -= (k * vy + G) * h;
-    vz -= k * vz * h;
-    const pz = z;
-    const py = y;
-    x += vx * h; y += vy * h; z += vz * h;
-    if (yNet === null && ((pz < 0) !== (z < 0)) && Math.abs(z - pz) > 1e-6) {
-      const f = (0 - pz) / (z - pz);
-      yNet = py + (y - py) * f;
+  // 与服务端 60Hz tick 使用同一积分器，最后一个不足 tick 的步长单独处理。
+  for (let elapsed = 0; elapsed < T - 1e-10;) {
+    const h = Math.min(1 / 60, T - elapsed);
+    const pz = b.z, py = b.y;
+    integrate(b, h);
+    if (yNet === null && ((pz < 0) !== (b.z < 0))) {
+      const f = -pz / (b.z - pz);
+      yNet = py + (b.y - py) * f;
     }
+    elapsed += h;
   }
+  const { x, y, z } = b;
+  ({ vx, vy, vz } = b);
   return { x, y, z, vx, vy, vz, yNet };
 }
 
@@ -43,14 +41,12 @@ export function solveLaunch(b, tx, tz, T) {
   let vx = (tx - b.x) / T;
   let vz = (tz - b.z) / T;
   let vy = (0 - b.y) / T + 0.5 * G * T;
-  let last = null;
   const err = (ax, ay, az) => {
     const r = simBall(b.x, b.y, b.z, ax, ay, az, T);
     return { ex: r.x - tx, ey: r.y, ez: r.z - tz, r };
   };
   for (let it = 0; it < 7; it++) {
     const e = err(vx, vy, vz);
-    last = e.r;
     if (Math.abs(e.ex) + Math.abs(e.ey) + Math.abs(e.ez) < 0.02) break;
     const d = 0.08;
     const a = err(vx + d, vy, vz);
@@ -67,7 +63,8 @@ export function solveLaunch(b, tx, tz, T) {
     const dz = det3(j11, j12, bx, j21, j22, by, j31, j32, bz) / det;
     vx += dx * 0.7; vy += dy * 0.7; vz += dz * 0.7;
   }
-  return { vx, vy, vz, netY: last ? last.yNet : null };
+  const result = err(vx, vy, vz);
+  return { vx, vy, vz, netY: result.r.yNet, error: Math.hypot(result.ex, result.ey, result.ez) };
 }
 
 export function det3(a, b, c, d, e, f, g, h, i) {

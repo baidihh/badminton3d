@@ -4,8 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <link rel="icon" href="data:,">
-<title>3D 体感羽毛球</title>
+<title>COURTSIDE · 下一拍，就现在</title>
 <link rel="stylesheet" href="/css/screen.css">
+<link rel="stylesheet" href="/css/training.css">
+<link rel="stylesheet" href="/css/game-experience.css">
 </head>
 <body>
 <canvas id="c"></canvas>
@@ -13,11 +15,12 @@
 <div class="modelTip" id="modelTip">模型加载中…</div>
 <div class="split" id="split"></div>
 
+<header class="courtNav"><button id="backLobby">← 俱乐部</button><span class="courtWordmark">COURTSIDE <i>COAST CLUB / 01</i></span><button id="courtConnect">连接手机 ↗</button></header>
 <div id="hud">
   <div class="score">
-    <div class="side p1"><span class="dot" id="dotL"></span><span class="nm" id="nL">玩家 1</span><b id="sL">0</b><span class="shotTag" id="tagL">—</span></div>
+    <div class="side p1"><span class="hudPortrait"><img id="hudAvatarL" alt="玩家一角色"></span><span class="dot" id="dotL"></span><span class="nm" id="nL">玩家 1</span><b id="sL">0</b><span class="shotTag" id="tagL">—</span></div>
     <div class="mid" id="rally">RALLY 0</div>
-    <div class="side p2"><span class="shotTag" id="tagR">—</span><b id="sR">0</b><span class="nm" id="nR">电脑</span><span class="dot" id="dotR"></span></div>
+    <div class="side p2"><span class="hudPortrait"><img id="hudAvatarR" alt="玩家二角色"></span><span class="shotTag" id="tagR">—</span><b id="sR">0</b><span class="nm" id="nR">电脑</span><span class="dot" id="dotR"></span></div>
   </div>
   <div class="chip"><span class="dot" id="phoneDot"></span><span id="phoneTxt">手机未连接</span></div>
 </div>
@@ -28,7 +31,9 @@
 <div class="toast" id="toast"></div>
 <div class="grade" id="grade"></div>
 <div class="ready" id="ready">挥动手机 · 或按空格 开始</div>
+<section id="trainingPanel" class="trainingPanel" aria-label="定点训练"></section>
 
+<div class="courtCaption"><span>COAST CLUB</span><b>把下一拍，交给直觉。</b><i>7 分制 · 先到 7 分获胜</i></div>
 <div class="bar">
   <button id="b1" class="on">单人</button>
   <button id="b2">双人分屏</button>
@@ -38,11 +43,18 @@
     <button class="diff on" data-lv="normal">中等</button>
     <button class="diff" data-lv="hard">困难</button>
   </span>
+  <button id="bchar">角色</button>
   <button id="bqr">手机连接</button>
+  <button id="bbackhand" disabled>练反手</button>
+  <button id="btrain" disabled>定点训练</button>
   <button id="brs">重开</button>
   <button id="bsnd">声音开</button>
 </div>
 
+<section id="characterPanel" class="characterPanel" hidden aria-label="选择角色">
+  <div id="screenCharacters" class="characterPicks"></div>
+  <a href="/characters.html">打开角色对照演示 ↗</a>
+</section>
 <div class="poseCard" id="poseCard">
   <div class="poseTitle">手屏同步</div>
   <div class="stage3d"><div class="phone3d" id="phone3d"></div></div>
@@ -61,38 +73,29 @@
   </div>
 </div>
 
-<div class="start" id="start">
-  <div class="startGrid">
-    <div class="qrCard">
-      <h3>手机当球拍</h3>
-      <p class="sub">和电脑连同一个 WiFi（或蓝牙网络共享），扫码进入手柄页。</p>
-      <div class="qrbox" id="qrbox"><span style="font-size:11px;color:#888">生成中…</span></div>
-      <div class="url" id="qurl"></div>
-      <div class="addrPick" id="addrPickStart"></div>
-      <div class="stepList">
-        <div class="step"><i>1</i><span>扫码打开手机页，点「开启体感」</span></div>
-        <div class="step"><i>2</i><span>握拍就位，等手机完成静止校准</span></div>
-        <div class="step"><i>3</i><span>看 3D 手机跟着你转，试挥三次即可上场</span></div>
+<div class="start" id="start" data-page="welcome">
+  <header class="lobbyHeader"><a class="clubLogo" href="/" aria-label="COURTSIDE 首页"><svg viewBox="0 0 36 36" fill="none" aria-hidden="true"><path d="M8 4 28 9 20 28 6 16Z" stroke="currentColor" stroke-width="2.4"/><path d="m8 4 12 24M28 9 6 16M15 6l-4 17M22 8l-8 18" stroke="currentColor" stroke-width="1.4"/><circle cx="17" cy="29" r="4" fill="currentColor"/></svg>COURTSIDE<span>海岸羽毛球俱乐部</span></a><nav><a href="/characters.html">角色图鉴 ↗</a><a href="/shot-lab.html">击球练习 ↗</a><button id="lobbyHelp">怎么玩？</button></nav></header>
+  <div class="flowProgress" aria-label="准备流程"><button data-jump="welcome" class="active"><span>01</span> 欢迎入场</button><i></i><button data-jump="characters"><span>02</span> 选择搭档</button><i></i><button data-jump="setup"><span>03</span> 准备开球</button></div>
+  <main class="lobbyShell">
+    <section class="lobbyCopy">
+      <div class="flowPage" data-flow-page="welcome"><p class="clubEyebrow"><i></i> A LITTLE PLAY. A LOT OF JOY.</p><h1>下一拍，<br><em>就现在。</em><span class="titleSpark">✳</span></h1><p class="clubLead">把手机变成球拍，把客厅变成主场。<br>选个合拍的搭档，来一场轻松又认真的较量。</p><button class="clubPrimary" id="welcomeNext">开启我的主场 <span>↗</span></button><div class="welcomeFacts"><span><b>9</b> 位个性搭档</span><span><b>7</b> 分畅快对决</span><span><b>1–2</b> 人随时开打</span></div></div>
+      <div class="flowPage" data-flow-page="characters" hidden><p class="clubEyebrow">FIND YOUR COURTMATE / 02</p><h2>选个搭档，<br><em>一起上场。</em></h2><p class="clubLead compact">没有标准答案，喜欢的就是最合拍的。</p><div id="gameRoster" class="gameRoster" aria-label="选择上场角色"></div><div class="lobbyActionRow"><button class="clubBack" data-back>← 上一步</button><button class="clubPrimary" id="characterNext">就选这位 <span>→</span></button></div></div>
+      <div class="flowPage" data-flow-page="setup" hidden><p class="clubEyebrow">READY WHEN YOU ARE / 03</p><h2>你的主场，<br><em>你来定义。</em></h2>
+        <div class="setupGroup"><span class="setupLabel">01 / 和谁打</span><div class="modeChoices"><button data-mode="solo" class="selected"><b>单人挑战</b><small>和电脑来一场</small></button><button data-mode="duo"><b>双人同乐</b><small>左右分屏，各有主场</small></button></div></div>
+        <div class="setupGroup" id="setupDifficulty"><span class="setupLabel">02 / 今天的节奏</span><div class="startDiff"><button class="diff" data-lv="easy">轻松热身</button><button class="diff" data-lv="normal">刚好过瘾</button><button class="diff" data-lv="hard">认真较量</button></div></div>
+        <div class="setupGroup"><span class="setupLabel">03 / 用什么挥拍</span><div class="inputChoices"><button data-control="keyboard" class="selected"><span>⌨</span><b>键盘试玩</b><small>空格挥拍 · A / D 调方向</small></button><button data-control="phone"><span>▯</span><b>手机体感</b><small>扫码连接，把手机当球拍</small></button></div></div>
+        <div class="setupKeyboard" id="setupKeyboard"><span class="kbd">空格</span> 挥拍 <span class="kbd">A</span> / <span class="kbd">D</span> 调方向 <span id="duoKeys" hidden>　玩家 2：回车挥拍 · J / L 调方向</span><p>自动跑位 · Shift + 挥拍打轻球 · Alt + 挥拍杀球。</p></div>
+        <div class="qrCard setupQr" id="setupQr" hidden><div><h3>扫码，让手机上场。</h3><p class="sub">手机与电脑连接同一 WiFi，打开后跟随指引校准。</p><div class="qrbox" id="qrbox"><span>正在生成连接码…</span></div></div><div class="qrDetails"><div class="phoneState"><span class="dot" id="startDot"></span><span id="startPhoneTxt">等待手机连接</span></div><p class="sub" id="connectionHelp">开启体感 → 握拍校准 → 三次试挥 → 上场</p><div class="url" id="qurl"></div><div class="addrPick" id="addrPickStart"></div><button id="useKeyboard" class="clubTextButton">先用键盘体验 →</button></div></div>
+        <div class="lobbyActionRow"><button class="clubBack" data-back>← 换个搭档</button><button class="clubPrimary" id="go" disabled>进入球场 <span>↗</span></button></div><p class="entryStatus" id="entryStatus" role="status">连接球场中…</p>
       </div>
-      <div class="phoneState"><span class="dot" id="startDot"></span><span id="startPhoneTxt">手机未连接 · 也可用键盘</span></div>
-    </div>
-    <div class="intro">
-      <h1>3D 体感<em>羽毛球</em></h1>
-      <p class="lead">握起手机当球拍，球到身边再挥。<br>单人对战电脑，双人左右分屏各看各的视角。</p>
-      <p class="lead" style="margin-bottom:26px">
-        <span class="kbd">空格</span> 挥拍　<span class="kbd">A</span> / <span class="kbd">D</span> 调整落点<br>
-        <span style="color:#6f8299">没有手机也能先用键盘试玩</span>
-      </p>
-      <div class="startDiff">
-        <span class="sdLabel">电脑难度</span>
-        <button class="diff" data-lv="easy">简单</button>
-        <button class="diff" data-lv="normal">中等</button>
-        <button class="diff" data-lv="hard">困难</button>
-      </div>
-      <button class="go" id="go">进入球场</button>
-    </div>
-  </div>
+    </section>
+    <section class="showroom" aria-label="角色三维展示"><div class="showroomTop"><span>MEET YOUR COURTMATE</span><span id="showcaseNumber">NO. 02</span></div><div class="showroomRing"></div><span class="showroomOrbit">PLAY MORE. FEEL GOOD.</span><canvas id="characterShowcase" aria-label="所选角色实时三维预览"></canvas><div class="showroomLabel"><div><span id="showcaseRole">元气小猫</span><h3 id="showcaseName">桃桃</h3></div><button id="previewSwing" aria-label="预览挥拍动作">试挥一拍 ↗</button></div><p id="showcaseStatus" class="showcaseStatus" role="status">正在准备搭档…</p></section>
+  </main>
+  <footer class="lobbyFooter"><span>COAST CLUB / EVERYONE'S HOME COURT</span><span>不管几岁，都值得为好球开心。</span><span>EST. 2026</span></footer>
+  <div id="startCharacters" hidden></div>
 </div>
+<section class="matchResult" id="matchResult" hidden aria-label="比赛结果"><div class="resultCard"><p class="clubEyebrow">THAT WAS A GOOD GAME.</p><div class="resultMark" id="resultMark">✳</div><h2 id="resultTitle">漂亮的一局。</h2><p id="resultSubtitle"></p><div class="resultScore"><div><span id="resultLeftName"></span><b id="resultLeftScore">0</b></div><span>:</span><div><span id="resultRightName"></span><b id="resultRightScore">0</b></div></div><button class="clubPrimary" id="rematch">再来一局 <span>↗</span></button><button class="clubBack" id="resultLobby">换个搭档，再出发 →</button></div></section>
+<dialog id="howToPlay" class="helpDialog"><button id="closeHelp" aria-label="关闭玩法说明">×</button><p class="clubEyebrow">A QUICK WARM-UP</p><h2>好球，从这一拍开始。</h2><div class="helpSteps"><p><b>01</b><span>角色自动跑位，你只需看球、挥拍。</span></p><p><b>02</b><span>键盘按空格击球，A / D 控制左右落点。按住 Shift 打轻球，按住 Alt 打杀球。双人模式，另一位用回车与 J / L。</span></p><p><b>03</b><span>手机向上挥打高远球；按住吊球键轻挥，网前可放网或勾对角；举高手，再向下压打杀球。</span></p><p><b>04</b><span>率先拿到 7 分获胜。球到身边再挥，挥空后留一点恢复时间。</span></p></div><button id="helpGotIt" class="clubPrimary">明白了，来一球 ↗</button></dialog>
 
 <script src="/socket.io/socket.io.js"></script>
 <script type="importmap">

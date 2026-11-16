@@ -8,6 +8,19 @@
   body{font-family:"PingFang SC","SF Pro Text",system-ui,-apple-system,sans-serif;
     color:var(--ink);-webkit-font-smoothing:antialiased}
   #c{display:block;width:100%;height:100%}
+  #trainingPanel{position:fixed;left:18px;top:96px;z-index:10;width:300px;max-height:calc(100dvh - 180px);overflow-y:auto;backdrop-filter:blur(16px)}
+  #trainingPanel[data-active="false"]{display:none}
+  #trainingPanel[data-active="false"]:has(.trainingError:not([hidden])){display:block}
+  body.trainingActive .score,body.trainingActive .poseCard,body.trainingActive .toast,
+  body.trainingActive .grade,body.trainingActive .ready,body.trainingActive .prompt{display:none}
+  #btrain{color:#f8d477}
+  button:disabled{opacity:.4;cursor:default}
+  @media (max-width:760px){
+    #trainingPanel{left:10px;top:65px;width:240px;max-height:calc(100dvh - 150px);padding:10px}
+    #trainingPanel .trainingPrompt h2{font-size:20px}
+    #trainingPanel .trainingCourt{display:none}
+    body.trainingActive .bar{max-width:calc(100% - 20px);flex-wrap:wrap;justify-content:center}
+  }
 
   .modelTip{position:fixed;right:18px;top:18px;z-index:12;padding:7px 12px;border-radius:9px;
     background:rgba(7,12,19,.8);border:1px solid var(--line);font-size:11px;color:var(--dim);
@@ -174,3 +187,5 @@
     .qrCard{order:2} .intro h1{font-size:34px}
     .poseCard{display:none}
   }
+
+.characterPick{display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:12px;color:#a3b9cb}.characterPick select{min-width:0;max-width:200px;background:#101f2e;border:1px solid #31485c;border-radius:9px;padding:9px;color:#f4f8fc;font:inherit}.characterPick select:disabled{opacity:.45}.characterPicks{display:grid;gap:10px;margin:16px 0}.characterLink{display:block;color:#93d7e9;font-size:12px;margin:12px 0 18px;text-decoration:none}.characterPanel{position:fixed;left:20px;bottom:85px;z-index:40;background:#0b1725;border:1px solid #304457;border-radius:16px;padding:8px 20px 20px;width:min(320px,calc(100vw - 40px));box-sizing:border-box}.characterPanel[hidden]{display:none}.characterPanel a{color:#93d7e9;font-size:12px}#phoneCharacter{padding:10px 4px}.characterPick select:focus-visible{outline:2px solid #66d8f1;outline-offset:3px}

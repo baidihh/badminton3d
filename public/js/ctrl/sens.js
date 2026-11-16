@@ -1,7 +1,11 @@
+import { handedStrokeDirection, swingPower } from '../control.js';
 // 传感器与挥拍识别：姿态解算、滤波、挥拍窗口、球路分类
 import * as THREE from 'three';
 import { clamp, D2R, R2D, Q_IDENTITY, X_AXIS, MAX_TILT } from './util.js';
 import { gate } from './gate.js';
+import { SensorCapture } from './sensor-capture.js';
+
+const rawCapture = new SensorCapture();
 
 let swingHandler = null;   // 由主流程注入：出球动作
 let calReady = null;       // 由主流程注入：可以点「记录初始姿态」了
@@ -44,6 +48,7 @@ const SENS = {
   tapMode: false,
   // 前半球瞄准（校准坐标系：+Z = 正前，+X = 右，+Y = 上）
   az: 0, el: 0,
+  lastIntent: 0, lastIntentAt: 0,
   rawAz: 0,
   prevAim: new THREE.Vector3(0, 0, 1),
   qProj: new THREE.Quaternion(),
@@ -86,8 +91,6 @@ const tmpEuler = new THREE.Euler();
 const tmpVec = new THREE.Vector3();
 const tmpVec2 = new THREE.Vector3();
 const tmpGyro = new THREE.Vector3();
-const realA = new THREE.Vector3();
-const realB = new THREE.Vector3();
 const zAxis = new THREE.Vector3(0, 0, 1);
 const grav = { x: 0, y: 0, z: 0 };
 
@@ -106,7 +109,10 @@ function sensorDt(e, key) {
 let accPrev = null;
 // 节流状态在 gate.js：传感器判定与出球共用
 let invert = Number(localStorage.getItem('bm3_invert') || 1);
+let holdingHand = localStorage.getItem('bm3_hand') === 'left' ? 'left' : 'right';
 function onOrientation(e) {
+  const now = performance.now();
+  rawCapture.orientation(e, now, screenAngle());
   if (e.alpha === null && e.beta === null && e.gamma === null) return;
   SENS.orientCount++;
   SENS.hasOrient = true;
@@ -120,7 +126,6 @@ function onOrientation(e) {
   SENS.qRaw.setFromEuler(tmpEuler);
   SENS.qRaw.multiply(tmpQQ.setFromAxisAngle(zAxis, -screenAngle() * D2R));
 
-  const now = performance.now();
   SENS.lastOrientT = now;
   const dtOrient = sensorDt(e, 'orientEventT');
 
@@ -212,27 +217,19 @@ function onOrientation(e) {
   SENS.qProj.setFromUnitVectors(tmpVec, tmpVec2).multiply(SENS.qRel);
 
   // 真实姿态（给大屏球拍）：保留校准时的真实仰角
-  SENS.qReal.copy(SENS.qBase).multiply(SENS.qRel);
-  const aimNow = realA.set(0, 1, 0).applyQuaternion(SENS.qReal);
-  if (aimNow.z < 0) {
-    const aimClipped = realB.copy(aimNow);
-    aimClipped.z = 0;
-    if (aimClipped.lengthSq() < 1e-4) aimClipped.set(0, aimNow.y >= 0 ? 1 : -1, 0);
-    aimClipped.normalize();
-    SENS.qReal.premultiply(tmpQQ.setFromUnitVectors(aimNow, aimClipped));
-  }
-
-  // 姿态镜（给手机屏幕）：以"初始握持"为竖直基准的相对姿态，只在前半球内显示
-  const dev = 2 * Math.acos(clamp(Math.abs(SENS.qProj.w), 0, 1));
-  if (dev > MAX_TILT) {
-    SENS.qMirror.copy(Q_IDENTITY).slerp(SENS.qProj, MAX_TILT / dev);
-  } else {
-    SENS.qMirror.copy(SENS.qProj);
-  }
+  const poseTarget = tmpQQ.copy(SENS.qBase).multiply(SENS.qRel);
+  const poseDt = dtOrient || 1 / 60;
+  // 静止压抖、运动跟手；不再投影到半球边缘造成拍子翻转。
+  const follow = 1 - Math.exp(-(SENS.omega > 120 ? 35 : 12) * poseDt);
+  if (SENS.omega > 25 || SENS.qReal.angleTo(poseTarget) > 0.015) SENS.qReal.slerp(poseTarget, follow);
+  const dev = 2 * Math.acos(clamp(Math.abs(SENS.qRel.w), 0, 1));
+  const mirrorTarget = tmpQInv.copy(Q_IDENTITY).slerp(SENS.qRel, dev > MAX_TILT ? MAX_TILT / dev : 1);
+  SENS.qMirror.slerp(mirrorTarget, follow);
 
   // 雷达轨迹（最近 0.35 秒）
   const hist = SENS.aimHist;
-  hist.push({ az: SENS.azF, el: SENS.el, t: now });
+  const aimIntent = SENS.swing ? handedStrokeDirection(SENS.swing.yawSweep, holdingHand) * invert : (now - SENS.lastIntentAt < 650 ? SENS.lastIntent : 0);
+  hist.push({ az: aimIntent, el: SENS.el, t: now });
   while (hist.length && now - hist[0].t > 350) hist.shift();
   if (hist.length > 40) hist.shift();
 
@@ -246,6 +243,7 @@ function onMotion(e) {
   SENS.hasMotion = true;
 
   const now = performance.now();
+  rawCapture.motion(e, now);
   const dtMotion = sensorDt(e, 'motionEventT');
 
   const ag = e.accelerationIncludingGravity;
@@ -334,6 +332,9 @@ function updateSwing(now, dt, omegaDeg) {
   const om = ob.length >= 3 ? med3(ob[0], ob[1], ob[2]) : omegaDeg;
 
   if (SENS.swing) {
+    // 世界竖轴角速度积分只覆盖本次挥拍，不继承罗盘偏移；抬拍不会制造左右跳变。
+    SENS.swing.yaw += SENS.omegaYaw * D2R * dt;
+    if (Math.abs(SENS.swing.yaw) > Math.abs(SENS.swing.yawSweep)) SENS.swing.yawSweep = SENS.swing.yaw;
     SENS.swing.sweep += dAz;
     SENS.swing.dropHold = SENS.swing.dropHold || SENS.dropHold;
     SENS.swing.elMin = Math.min(SENS.swing.elMin, SENS.elMed);
@@ -348,16 +349,18 @@ function updateSwing(now, dt, omegaDeg) {
       SENS.swing.azAtPeak = SENS.az;
       SENS.swing.peakAt = now;
     }
-    if (om < SENS.thresholdOmega * 0.6 || now - SENS.swing.start > 300) {
+    if (om < SENS.thresholdOmega * 0.6 ||
+      (now - SENS.swing.peakAt >= 45 && om < SENS.swing.peak * 0.88) ||
+      now - SENS.swing.start > 180) {
       endSwing(now);
     }
   } else if (SENS.waitRelease) {
     // 等角速度回落到一半以下再允许下一次挥拍，避免持续转动被重复计数
     if (om < SENS.thresholdOmega * 0.5) SENS.waitRelease = false;
-  } else if (om > SENS.thresholdOmega && now > gate.cooldownUntil && Math.abs(SENS.rawAz) < 1.55) {
-    // 起拍门槛用"未投影"的方位：身后蓄力不触发
+  } else if (om > SENS.thresholdOmega && now > gate.cooldownUntil) {
+    // 只以角速度触发，不让不稳定的机头投影决定是否起拍。
     SENS.swing = {
-      start: now, peak: om, sweep: 0, peakSweep: 0,
+      start: now, peak: om, sweep: 0, peakSweep: 0, yaw: SENS.omegaYaw * D2R * dt, yawSweep: SENS.omegaYaw * D2R * dt,
       elStart: SENS.elMed, elAtPeak: SENS.elMed, elMin: SENS.elMed, elMax: SENS.elMed,
       azAtPeak: SENS.az, peakAt: now,
       dropHold: SENS.dropHold,
@@ -402,11 +405,10 @@ function endSwing(now) {
   if (!sw) return;
   SENS.waitRelease = true;
   const t = SENS.thresholdOmega;
-  const power = clamp((sw.peak - t * 0.75) / (1150 - t * 0.75), 0.12, 1);
+  const power = swingPower(sw.peak, t);
   // 用挥拍过程中的最大单向扫角，避免收拍/回落把左右抵消掉
-  let dir = (sw.peakSweep * R2D) / 80 * invert;
-  if (Math.abs(dir) < 0.15) dir = 0;
-  dir = clamp(dir, -1, 1);
+  const dir = handedStrokeDirection(sw.yawSweep, holdingHand) * invert;
+  SENS.lastIntent = dir; SENS.lastIntentAt = now;
   // 抬拍角决定弧线高度：取本次挥拍的最高点
   const lift = clamp((sw.elMax + 0.45) / 1.1, 0, 1);
   // 出球方向：峰值窗口的中值，抗单帧抖动
@@ -414,7 +416,7 @@ function endSwing(now) {
   if (swingHandler) swingHandler(power, dir, sw.peak, lift, sw.start, classifyShot(sw), {
     elStart: sw.elStart, elMax: sw.elMax, elMin: sw.elMin,
     elAtPeak: sw.elAtPeak, azAtPeak: azPeak, azRaw: sw.azAtPeak,
-    peakAt: sw.peakAt, sweep: sw.peakSweep * R2D,
+    peakAt: sw.peakAt, sweep: sw.peakSweep * R2D, yawSweep: sw.yawSweep,
   });
 }
 
@@ -453,7 +455,14 @@ function screenAngle() {
 }
 
 export { SENS, onOrientation, onMotion };
+export function getTrainingCapture() {
+  return rawCapture.snapshot(performance.now(), {
+    referenceQuaternion: SENS.qRef.toArray(), gyroBias: SENS.gyroBias,
+    thresholdOmega: SENS.thresholdOmega, invert,
+  });
+}
 export function getInvert() { return invert; }
 export function setInvert(v) { invert = v; }
+export function setHoldingHand(hand) { holdingHand = hand === 'left' ? 'left' : 'right'; }
 export function setSwingHandler(fn) { swingHandler = fn; }
 export function setCalReadyHandler(fn) { calReady = fn; }

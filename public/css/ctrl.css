@@ -24,6 +24,17 @@
     background:rgba(255,255,255,.06);border:1px solid var(--line);color:var(--ink)}
 
   #mirrorHome{flex:none}
+  #trainingPanel{flex:none;margin:0 0 8px}
+  #app.trainingActive{overflow-y:auto;touch-action:pan-y}
+  #app.trainingActive #mirrorHome,#app.trainingActive .aimWrap,#app.trainingActive .shotTip,
+  #app.trainingActive .sc{display:none}
+  #app.trainingActive .stage{min-height:116px;flex:none;margin:6px 0}
+  #app.trainingActive .ring{width:112px}
+  #app.trainingActive .big{font-size:21px}
+  #app.trainingActive .hint{font-size:10px}
+  #app.trainingActive .poseKey{min-height:40px;padding:9px 18px;font-size:12px}
+  #app.trainingActive .foot{margin-top:6px}
+  button:disabled{opacity:.4;cursor:default}
 
   .mirrorWrap{position:relative;height:150px;border-radius:16px;overflow:hidden;
     border:1px solid rgba(255,255,255,.09);
@@ -194,3 +205,8 @@
     .big{font-size:26px}
     .heroArt{height:130px}
   }
+
+.characterPick{display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:12px;color:#a3b9cb}.characterPick select{min-width:0;max-width:200px;background:#101f2e;border:1px solid #31485c;border-radius:9px;padding:9px;color:#f4f8fc;font:inherit}.characterPick select:disabled{opacity:.45}.characterPicks{display:grid;gap:10px;margin:16px 0}.characterLink{display:block;color:#93d7e9;font-size:12px;margin:12px 0 18px;text-decoration:none}.characterPanel{position:fixed;left:20px;bottom:85px;z-index:40;background:#0b1725;border:1px solid #304457;border-radius:16px;padding:8px 20px 20px;width:min(320px,calc(100vw - 40px));box-sizing:border-box}.characterPanel[hidden]{display:none}.characterPanel a{color:#93d7e9;font-size:12px}#phoneCharacter{padding:10px 4px}.characterPick select:focus-visible{outline:2px solid #66d8f1;outline-offset:3px}
+
+/* COURTSIDE handheld companion */
+:root{--ink:#f4f4e7;--dim:#a5bfae;--line:#c9ddbf24;--p1:#a9d9bd;--p2:#efa184;--ok:#b1e2ad}html,body{background:#153f36}#app{background:radial-gradient(ellipse at 50% 35%,#285449,#12392f 75%)}#onboard{background:radial-gradient(ellipse at 50% 25%,#315b4c,#133a30 85%)}.controllerBrand{font:800 20px "Avenir Next","PingFang SC",sans-serif;letter-spacing:-.5px;display:flex;align-items:center;gap:16px;margin:0 0 18px}.controllerBrand span{font-size:6px;letter-spacing:1.5px;font-weight:400;color:#b1c7ad}.obIntro h2,.obHead h2{font-family:"Songti SC",serif;font-weight:500;font-size:30px}.primary{color:#fff8eb;background:#d97e5a;border:1px solid #e3926e;box-shadow:0 8px 30px #d6814f22}.badge{background:#254e4133;color:#b6cbb1}.slot.left{color:#c4e4bd;border-color:#b2d5a940}.slot.right{color:#efb59e;border-color:#e8a78e55}.mirrorWrap{background:radial-gradient(ellipse at 50% 40%,#436a5244,#113c30)}.mirrorBadge.ok{color:#c6e6be;border-color:#a9d9bd55}.poseKey{color:#244f3e;background:#e8efdb;border-color:#c9ddbc}.poseKey.holding{background:#fff4db;color:#244f3e;border-color:#e6c8a4;box-shadow:0 0 20px #f5d0a133}.holdBtn{background:#e49a7830;border-color:#e5a18450;color:#f5d4bd}.ring{border-color:#adcfa54d;background:radial-gradient(circle,#4f76552b,transparent 70%);box-shadow:0 0 55px #82b58112}.ring.hot{border-color:#d4eabd;box-shadow:0 0 35px #b4d1a52b}.ring.hit{border-color:#e4f3b8;box-shadow:0 0 35px #cbe3a74d}.big.hot{color:#e3f1cb}.btn,.mini{border-color:#c4d6b92b;background:#dae7cd0a;color:#b7cbb1}#phoneCharacter .characterPick{color:#b7cbb1}#phoneCharacter select{background:#e7eddb;color:#2e5843;border-color:#c7d6b7;border-radius:10px}.sc .me{color:#c4e4bd}.sc .them{color:#efb59e}.poseKey:focus-visible,.btn:focus-visible,.primary:focus-visible{outline:3px solid #f1bd91;outline-offset:3px}@media(max-height:850px){#mirrorHome .mirrorWrap{height:122px}.aimWrap{height:76px}.poseKey{min-height:44px;padding:10px 17px}.holdBtn{min-height:44px;padding:10px 16px}.ring{width:min(39vw,154px)}#phoneCharacter{padding:5px 4px}.shotTip{font-size:9px}}

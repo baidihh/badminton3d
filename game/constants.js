@@ -29,7 +29,7 @@ export const rand = (a, b) => a + Math.random() * (b - a);
 export const DRAG = 0.11;
 export const SUB_DT = 0.008;        // 子步长，避免高速穿模
 
-export const SHOT_TYPES = new Set(['clear', 'drop', 'smash']);
+export const SHOT_TYPES = new Set(['clear', 'drop', 'smash', 'net', 'drive', 'slice']);
 
 // 三档电脑难度：反应、失误率、跑位速度、球路配比、压空当程度、力量区间
 export const AI_LEVELS = {
@@ -37,3 +37,9 @@ export const AI_LEVELS = {
   normal: { react: 0.23, miss: 0.18, speed: 0.96, mix: [0.56, 0.20, 0.24], aim: 0.55, power: [0.42, 0.88] },
   hard: { react: 0.12, miss: 0.05, speed: 1.10, mix: [0.40, 0.18, 0.42], aim: 0.95, power: [0.58, 1.00] },
 };
+
+// 挥拍恢复：秒；连续乱挥只延长恢复，不永久降低跑速。
+export const SWING_RECOVERY = 0.38;
+export const MAX_SWING_RECOVERY = 0.75;
+export const SWING_MOVE_MIN = 0.55;
+export const HIT_RECOVERY = 0.12;

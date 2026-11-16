@@ -1,5 +1,6 @@
 // 前半球落点雷达
-import { SENS } from './sens.js';
+import { SENS, getInvert } from './sens.js';
+import { strokeDirection } from '../control.js';
 import { clamp, D2R } from './util.js';
 const $ = (id) => document.getElementById(id);
 
@@ -79,7 +80,8 @@ function drawAim() {
   }
 
   // 当前瞄准点
-  const [px, py] = aimPt(SENS.azF, SENS.el, cx, cy, R);
+  const intent = SENS.swing ? strokeDirection(SENS.swing.yawSweep) * getInvert() : (performance.now()-SENS.lastIntentAt<650 ? SENS.lastIntent : 0);
+  const [px, py] = aimPt(intent, SENS.el, cx, cy, R);
   const grad = actx.createRadialGradient(px, py, 0, px, py, 13);
   grad.addColorStop(0, 'rgba(220,250,255,.95)');
   grad.addColorStop(0.4, 'rgba(63,208,255,.55)');

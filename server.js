@@ -10,6 +10,7 @@ import QRCode from 'qrcode';
 import selfsigned from 'selfsigned';
 import { recorder } from './recorder.js';
 import { Game } from './game/game.js';
+import { shotReplay } from './game/shot-lab.js';
 import { attachSocket, ctrlStats, netStats } from './net/socket.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -101,6 +102,20 @@ function handler(req, res) {
   const url = new URL(req.url, 'http://x');
   let p = decodeURIComponent(url.pathname);
 
+  if (p === '/api/shot-replay' && req.method === 'GET') {
+    const requested = url.searchParams.get('shot');
+    const shot = ['net', 'smash', 'drive', 'slice'].includes(requested) ? requested : 'net';
+    const feed = ['0', '1', '2'].indexOf(url.searchParams.get('feed'));
+    const direction = url.searchParams.get('direction') === 'straight' ? 'straight' : 'cross';
+    const input = url.searchParams.get('timing');
+    const timing = input === 'wait' ? null : Math.max(-24, Math.min(60, Math.round(Number(input) || 0)));
+    const legacy = url.searchParams.get('legacy') === '1';
+    const replay = shotReplay(shot, Math.max(0, feed), direction, timing, legacy);
+    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+    res.end(JSON.stringify(replay));
+    return;
+  }
+
   if (p === '/api/net') {
     const addrs = listLANAddrs(); // 实时读取：蓝牙网络共享等网卡可能刚连上
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
@@ -191,7 +206,7 @@ game.onHitFx = (side, grade, power, swingId, shot, impact) => {
 };
 game.onMissFx = (side, swingId, ball, reason) => {
   io.to('slot:' + side).emit('ctrl:miss', { reason: reason || 'late' });
-  recorder.miss(side, { swingId, ball });
+  recorder.miss(side, { swingId, ball, reason });
 };
 
 attachSocket(io, game);
@@ -219,9 +234,10 @@ setInterval(loop, 16);
 setInterval(() => {
   io.to('ctrl').emit('ctrl:tick', {
     bx: game.ball.x, by: game.ball.y, bz: game.ball.z,
-    l: { x: game.left.x, y: game.left.y, z: game.left.z, score: game.left.score },
-    r: { x: game.right.x, y: game.right.y, z: game.right.z, score: game.right.score },
+    l: { x: game.left.x, y: game.left.y, z: game.left.z, score: game.left.score, characterId: game.left.characterId, recovering: game.left.recoverUntil > game.t },
+    r: { x: game.right.x, y: game.right.y, z: game.right.z, score: game.right.score, characterId: game.right.characterId, recovering: game.right.recoverUntil > game.t },
     phase: game.phase, srv: game.serverSide, msg: game.msg,
+    training: game.training?.snapshot() || null,
   });
 }, 66);
 

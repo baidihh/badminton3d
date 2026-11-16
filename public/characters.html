@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="icon" href="data:,">
+<title>你的球场搭档 · 角色俱乐部</title><link rel="stylesheet" href="/css/characters.css">
+</head>
+<body>
+<header class="masthead"><a class="wordmark" href="/">COURTSIDE<span>羽毛球俱乐部</span></a><a class="back" href="/">回到球场 <span>↗</span></a></header>
+<main>
+  <section class="intro"><div><p class="eyebrow"><span></span> PLAYER CLUB / 009</p><h1>你的搭档，<em>准备上场。</em></h1><p class="lede">从童趣伙伴到青春球员，找到你的球场搭档。<br>自由选角、同台对照，每个人都有自己的风格。</p></div><aside><span class="edition">A COURT FOR EVERYONE</span><span class="stamp">同动作<br>面对面</span><p>相同视角 · 相同光照 · 相同击球规则</p></aside></section>
+  <section class="roster" aria-label="角色列表">
+    <div class="roster-heading"><div><p class="eyebrow">FIND YOUR PARTNER</p><h2>六位新搭档，各有主场。</h2></div><nav id="rosterFilters" aria-label="角色风格筛选"><button data-group="all" class="active" aria-pressed="true">全部</button><button data-group="kids" aria-pressed="false">童趣 · 0–8</button><button data-group="teens" aria-pressed="false">青春 · 9–17</button><button data-group="young-adults" aria-pressed="false">活力 · 18–30</button></nav></div>
+    <div id="rosterCards" class="roster-cards"></div>
+    <p class="roster-hint">年龄为风格参考。男生、女生都可以自由选择喜欢的角色。</p>
+  </section>
+  <section class="lab" aria-label="角色外观对照">
+    <div class="lab-toolbar"><span class="live" id="demoStatus" role="status">正在准备球员…</span><span class="dragHint">拖动球员区域旋转视角 ↔</span></div>
+    <div class="stage" id="stage"><canvas id="comparison" aria-label="几何兔子与柔和兔子的实时三维预览"></canvas>
+      <div class="views"><article class="view" id="viewA"><div class="view-title"><span class="letter">A</span><div><h2 id="titleA">小焰</h2><select id="selectA" aria-label="左侧预览角色"></select></div></div><span class="floor-label">PLAYER / A</span></article><article class="view" id="viewB"><div class="view-title"><span class="letter">B</span><div><h2 id="titleB">桃桃</h2><select id="selectB" aria-label="右侧预览角色"></select></div></div><span class="floor-label">PLAYER / B</span></article></div>
+    </div>
+    <div class="controls"><div class="control-block"><span class="control-label">试试动作</span><div class="segmented" id="actions"><button data-action="idle" class="active" aria-pressed="true">准备</button><button data-action="footwork" aria-pressed="false">步法</button><button data-action="clear" aria-pressed="false">高远球</button><button data-action="smash" aria-pressed="false">杀球</button></div></div><div class="control-block"><span class="control-label">持拍手</span><div class="segmented" id="hands"><button data-hand="right" class="active" aria-pressed="true">右手</button><button data-hand="left" aria-pressed="false">左手</button></div></div><div class="control-block"><span class="control-label">视角</span><div class="segmented" id="angles"><button data-angle="0" class="active" aria-pressed="true">正面</button><button data-angle="1.5708" aria-pressed="false">侧面</button><button data-angle="3.14159" aria-pressed="false">背面</button></div></div><div class="playback"><button id="pause" aria-pressed="false">暂停</button><label for="speed">速度 <select id="speed"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="1.5">1.5×</option></select></label></div></div>
+    <div class="selection"><div><p class="selection-kicker">MAKE YOUR PICK</p><p>喜欢哪一个，就带它上场。</p></div><a id="playA" class="pick pick-a" href="/?character=dino">小焰上场 <span>↗</span></a><a id="playB" class="pick pick-b" href="/?character=kitten">桃桃上场 <span>↗</span></a></div>
+  </section>
+  <section class="notes"><p><b>先有角色，再有性格。</b>六位新搭档与原有兔子、经典运动员，共享击球规则。外观随心选，胜负靠发挥。</p><p class="provenance">演示资产为本地制作。新角色使用骨架驱动的几何部件，原有柔和兔子为蒙皮 GLB。未调用付费 AI 生成服务。</p></section>
+</main><footer><span>COURTSIDE / CHARACTER STUDIES</span><span>09 PLAYERS / ONE COURT</span></footer>
+<script type="importmap">{"imports":{"three":"/vendor/three.module.js","three/addons/":"/addons/"}}</script><script type="module" src="/js/character-demo.js"></script>
+</body></html>

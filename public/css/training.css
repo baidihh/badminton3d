@@ -1,0 +1,28 @@
+.trainingPanel{padding:14px;border:1px solid rgba(248,212,119,.32);border-radius:16px;background:rgba(8,18,28,.96);color:#eef3fa}
+.trainingPanel [hidden]{display:none!important}
+.trainingPanel button{font:inherit;font-size:12px;min-height:42px;padding:9px 12px;border-radius:10px;border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.04);color:#e5edf7;cursor:pointer}
+.trainingPanel button:disabled{opacity:.4;cursor:default}
+.trainingPanel button:focus-visible{outline:2px solid #f8d477;outline-offset:3px}
+.trainingPanel .trainingPrimary{color:#fff0c5;border-color:rgba(248,212,119,.5);background:rgba(248,212,119,.12)}
+.trainingIntro{display:flex;gap:12px;align-items:center;justify-content:space-between}
+.trainingIntro strong{font-size:13px}.trainingIntro p{font-size:10px;line-height:1.5;margin:4px 0 0;color:#a6b6c8}
+.trainingIntro button{flex:none}
+.trainingTop{display:flex;justify-content:space-between;font-size:11px;color:#c3b58f}
+.trainingPips{display:flex;gap:5px;margin:10px 0 14px}
+.trainingPips i{height:3px;flex:1;border-radius:3px;background:rgba(255,255,255,.15)}
+.trainingPips .done{background:#7be2ff}.trainingPips .current{background:#f8d477}
+.trainingEyebrow{display:block;font-size:10px;color:#a6b6c8;margin-bottom:4px}
+.trainingPrompt h2{font-size:25px;line-height:1.2;color:#ffe3a0;margin:0 0 6px}
+.trainingPrompt p{font-size:12px;line-height:1.6;margin:0;color:#d0dae5}
+.trainingCourt{display:flex;gap:12px;align-items:center;margin:10px 0;color:#7a94a4}
+.trainingCourt svg{width:128px;height:84px;flex:none}
+.trainingCourt>div{display:flex;flex-direction:column;gap:9px;font-size:10px;line-height:1.4;color:#a6b6c8}
+.trainingKey{display:inline-block;width:7px;height:7px;margin-right:5px;border-radius:2px;background:#f8d477}
+.trainingKey.stance{background:#7be2ff;border-radius:50%}.trainingKey.actual{background:#fff;border-radius:50%}
+.trainingResult{padding:10px 12px;margin:9px 0;border-radius:10px;background:rgba(255,255,255,.06);border-left:2px solid #fff}
+.trainingResult strong{display:block;font-size:19px;margin-bottom:4px}.trainingResult>span:last-child{font-size:11px;color:#bccbda}
+.trainingContext,.trainingRecording,.trainingMeaning,.trainingAvailability,.trainingError{font-size:10px;line-height:1.55;margin:5px 0 0;color:#9dafc2}
+.trainingRecording{color:#98dec0}.trainingRecording.notRecording,.trainingError{color:#ffb0a1}
+.trainingMeaning{color:#91a4b7;margin-top:6px}.trainingAvailability{color:#f8d477}
+.trainingActions{display:flex;flex-wrap:wrap;gap:7px;margin-top:12px}
+.trainingActions [data-action="stop"]{margin-left:auto;color:#a6b6c8}

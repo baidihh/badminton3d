@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>击球练习 · COURTSIDE</title>
+  <link rel="stylesheet" href="/css/shot-lab.css">
+  <script type="importmap">{"imports":{"three":"/vendor/three.module.js","three/addons/":"/addons/"}}</script>
+</head>
+<body>
+  <header><a href="/">COURTSIDE</a><nav><a href="/motion.html">动作对照</a><a href="/">回到俱乐部 ↗</a></nav></header>
+  <main>
+    <div class="heading"><h1>击球练习</h1><p>对照不同来球下的站位、挥拍与出球。</p></div>
+    <div class="lab">
+      <section class="stage" aria-label="三维击球回放">
+        <canvas id="court" aria-label="球员、球网和羽毛球轨迹"></canvas>
+        <span id="status" role="status">正在准备球场…</span>
+        <button id="camera" type="button">切换俯视</button>
+      </section>
+      <aside aria-label="练习设置">
+        <div class="settings">
+          <label>动作<select id="shot"><option value="net">网前球</option><option value="smash">向前下压杀球</option><option value="drive">后场正手被动抽球</option><option value="slice">后场反手被动切吊</option></select></label>
+          <label>喂球位置<select id="feed"><option value="0">位置一</option><option value="1">位置二</option><option value="2">位置三</option></select></label>
+          <label>方向<select id="direction"><option value="cross">对角</option><option value="straight">直线</option></select></label>
+          <label>判定<select id="legacy"><option value="0">新版 · 拍面接触</option><option value="1">旧版 · 范围判定</option></select></label>
+        </div>
+        <div class="try"><button id="feedBall">开始喂球</button><button id="swing" disabled>挥拍 <kbd>空格</kbd></button></div>
+        <p class="hint" id="hint">自动跑位。喂球后看球的位置，在合适的时候挥拍。</p>
+        <div class="examples" aria-label="预设挥拍时机"><button data-timing="-12">提前 0.2 秒</button><button data-timing="0">示范</button><button data-timing="12">延后 0.2 秒</button></div>
+        <dl><div><dt>触球位置</dt><dd id="contact">—</dd></div><div><dt>出球速度</dt><dd id="velocity">—</dd></div><div><dt>过网余量</dt><dd id="net">—</dd></div></dl>
+      </aside>
+      <div class="timeline"><button id="play">暂停</button><button id="impact">跳到触球</button><input id="time" type="range" value="0" step="1" min="0" max="1" aria-label="回放时间"><output id="clock">0.00 s</output><label><select id="speed" aria-label="播放速度"><option value=".25" selected>0.25×</option><option value=".5">0.5×</option><option value="1">1×</option></select></label></div>
+    </div>
+  </main>
+  <script type="module" src="/js/shot-lab-view.js"></script>
+</body>
+</html>

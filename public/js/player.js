@@ -1,3 +1,12 @@
+import { backhandAxes, sampleBackhand, sampleBackhandStroke } from './backhand-motion.js';
+import { addRosterKit } from './roster-kit.js';
+import { getCharacter } from './characters.js';
+import { addRabbitKit } from './rabbit-kit.js';
+import { addSportsKit } from './sports-kit.js';
+import { CONTACT_WINDOW, contactFrame } from './contact-racket.js';
+import { CONTACT_TIME, sampleStrokePose } from './stroke.js';
+import { ContactLocomotion } from './locomotion.js';
+import { readyPose } from './ready-pose.js';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
@@ -7,7 +16,11 @@ import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 // ============================================================
 const Y = new THREE.Vector3(0, 1, 0);
 const X = new THREE.Vector3(1, 0, 0);
+const Z = new THREE.Vector3(0, 0, 1);
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
+const smooth = t => t * t * (3 - 2 * t);
+const GRIP_CURL = [.64, .88, .62];
+const RELAXED_CURL = [.18, .26, .20];
 const READY_REACH = 1.14;   // 准备位拍头到肩的距离（≈ 臂长 + 拍长，手臂接近伸直）
 const ARM_YAW_MAX = 1.66;   // 肩水平限位 ≈95°：手臂不允许绕到身体后方
 const ARM_EL_MIN = -0.6;    // 手臂最低仰角
@@ -122,8 +135,10 @@ export function loadPlayerGLTF(url) {
 }
 
 const BONE_NAMES = {
+  hips: 'mixamorig:Hips',
   spine1: 'mixamorig:Spine1',
   spine2: 'mixamorig:Spine2',
+  neck: 'mixamorig:Neck',
   head: 'mixamorig:Head',
   headEnd: 'mixamorig:HeadTop_End',
   rArm: 'mixamorig:RightArm',
@@ -149,6 +164,27 @@ function findBone(root, name) {
     if (o.name.replace(/[^a-zA-Z0-9]/g, '').toLowerCase() === target) found = o;
   });
   return found;
+}
+
+/** Foot-local, meter-space envelope for heel/toe clearance across rigid kits and skins. */
+function footEnvelope(model,foot){
+  if(!foot)return [];
+  const origin=foot.getWorldPosition(new THREE.Vector3()),inverse=foot.getWorldQuaternion(new THREE.Quaternion()).invert();
+  const box=new THREE.Box3(),point=new THREE.Vector3();
+  const include=(mesh,index)=>box.expandByPoint(mesh.getVertexPosition(index,point).applyMatrix4(mesh.matrixWorld).sub(origin).applyQuaternion(inverse));
+  foot.traverse(o=>{if(o.isMesh&&o.visible&&!o.isSkinnedMesh)for(let i=0;i<o.geometry.attributes.position.count;i++)include(o,i);});
+  model.traverse(o=>{
+    if(!o.isSkinnedMesh||!o.visible)return;
+    const bone=o.skeleton.bones.indexOf(foot);if(bone<0)return;
+    const weights=o.geometry.attributes.skinWeight,indices=o.geometry.attributes.skinIndex;
+    o.skeleton.update();
+    for(let i=0;i<weights.count;i++){
+      let influence=0;for(let k=0;k<4;k++)if(indices.getComponent(i,k)===bone)influence+=weights.getComponent(i,k);
+      if(influence>.8)include(o,i);
+    }
+  });
+  if(box.isEmpty())return [new THREE.Vector3(0,-.045,.12)];
+  return [0,1,2,3,4,5,6,7].map(i=>new THREE.Vector3(i&1?box.max.x:box.min.x,i&2?box.max.y:box.min.y,i&4?box.max.z:box.min.z));
 }
 
 /** 让骨骼指向世界方向（在动画姿态上做增量旋转） */
@@ -200,8 +236,35 @@ function basisQuatBoneAxis(axis, dirToChild, normalHint, out) {
   return out;
 }
 
+function blendSliceRacket(frame, pose, axes, root, weight) {
+  const shaft = new THREE.Vector3(frame.shaft.x, frame.shaft.y, frame.shaft.z);
+  const normal = new THREE.Vector3(frame.normal.x, frame.normal.y, frame.normal.z);
+  const start = basisQuatBoneAxis(1, shaft, normal, new THREE.Quaternion());
+  const end = basisQuatBoneAxis(1,
+    shaft.set(pose.shaft.x * axes.x, pose.shaft.y, pose.shaft.z * axes.z),
+    normal.set(pose.normal.x * axes.x, pose.normal.y, pose.normal.z * axes.z),
+    new THREE.Quaternion());
+  start.slerp(end, weight);
+  const center = new THREE.Vector3(frame.center.x, frame.center.y, frame.center.z).lerp(new THREE.Vector3(
+    root.x + (pose.center.x - pose.hip.x) * axes.x,
+    pose.center.y,
+    root.z + (pose.center.z - pose.hip.z) * axes.z
+  ), weight);
+  return { center, shaft: shaft.copy(X).applyQuaternion(start), normal: normal.copy(Z).applyQuaternion(start) };
+}
+
 export class PlayerView {
-  constructor(gltf, { accent = 0x3FD0FF, shadowTex } = {}) {
+  constructor(gltf, { accent = 0x3FD0FF, shadowTex, character = getCharacter('athlete') } = {}) {
+    this.character = character;
+    this.id = character.id;
+    this.sourceGeometry = new Set();
+    this.sourceTextures = new Set([shadowTex]);
+    gltf.scene.traverse(o => {
+      if (!o.isMesh) return;
+      this.sourceGeometry.add(o.geometry);
+      for (const m of Array.isArray(o.material) ? o.material : [o.material])
+        for (const value of Object.values(m)) if (value?.isTexture) this.sourceTextures.add(value);
+    });
     this.root = new THREE.Group();
     this.accent = accent;
 
@@ -213,6 +276,10 @@ export class PlayerView {
     for (const [k, name] of Object.entries(BONE_NAMES)) {
       this.bone[k] = findBone(model, name);
     }
+
+    const required = ['rArm','rForeArm','rHand','lArm','lForeArm','lHand','rUpLeg','rLeg','rFoot','lUpLeg','lLeg','lFoot','spine1','spine2','head'];
+    const missing = required.filter(key => !this.bone[key]);
+    if (missing.length) throw new Error(`角色骨骼不兼容，缺少：${missing.join(', ')}。请使用登记的 Mixamo 双足骨架。`);
 
     // 用骨骼量身高：蒙皮网格的包围盒在绑定姿态下不可靠
     this.root.updateMatrixWorld(true);
@@ -227,13 +294,11 @@ export class PlayerView {
     }
     if (!Number.isFinite(footY)) footY = 0.08;
     const span = Math.max(0.4, headTopY - footY) + 0.07;
-    const scale = 1.82 / span;
+    const scale = character.effectiveHeight / span;
     model.scale.setScalar(scale);
     model.position.y = -footY * scale;
 
     // 队服配色
-    const bodyColor = new THREE.Color(accent);
-    const jointColor = bodyColor.clone().multiplyScalar(0.58);
     model.traverse((o) => {
       if (!o.isMesh) return;
       o.castShadow = true;
@@ -241,11 +306,13 @@ export class PlayerView {
       const mats = Array.isArray(o.material) ? o.material : [o.material];
       const next = mats.map((m) => {
         const c = m.clone();
-        if (m.name && /joint/i.test(m.name)) {
-          c.color.copy(jointColor);
+        if (character.appearance !== 'athlete') {
+          if (m.userData.teamColor === true) c.color.setHex(accent);
+        } else if (m.name && /joint/i.test(m.name)) {
+          c.color.setHex(0xc28e70);
           c.roughness = 0.72;
         } else {
-          c.color.copy(bodyColor);
+          c.color.setHex(0xd6a080);
           c.roughness = 0.56;
           c.metalness = 0.04;
         }
@@ -255,6 +322,10 @@ export class PlayerView {
     });
 
     this.model = model;
+
+    if (character.appearance === 'athlete') addSportsKit(this.root, this.bone, accent);
+    else if (character.appearance === 'rabbit') addRabbitKit(this.root, this.bone, accent);
+    else if (character.appearance === 'roster') addRosterKit(this.root, this.bone, character);
 
     // 骨骼长度（绑定姿态，已缩放）
     this.root.updateMatrixWorld(true);
@@ -266,6 +337,7 @@ export class PlayerView {
     const mkArm = (aKey, fKey, hKey, side) => {
       const a = this.bone[aKey], f = this.bone[fKey], h = this.bone[hKey];
       const restQ = h ? h.quaternion.clone() : new THREE.Quaternion();
+      const handName = side === 1 ? 'RightHand' : 'LeftHand';
       let ax = 0;
       if (h) {
         for (const c of h.children) {
@@ -277,6 +349,13 @@ export class PlayerView {
         axis: ax < 0 ? -1 : 1,
         l1: seg(a, f, 0.28), l2: seg(f, h, 0.26),
         restQ, restQInv: restQ.clone().invert(),
+        sliceFingers: ['Thumb1', 'Index2', 'Middle2', 'Ring2', 'Pinky2']
+          .map(name => findBone(model, handName + name)),
+        fingers: ['Index', 'Middle', 'Ring', 'Pinky'].flatMap(name =>
+          [1, 2, 3].flatMap(joint => {
+            const bone = findBone(model, handName + name + joint);
+            return bone ? [{ bone, rest: bone.quaternion.clone(), joint }] : [];
+          })),
       };
     };
     this.arms = {
@@ -293,6 +372,8 @@ export class PlayerView {
         up: u, knee: k, foot: f, side,
         l1: seg(u, k, 0.42), l2: seg(k, f, 0.4),
         restY: fp.y,
+        soleCorners: footEnvelope(model,f),
+        restWorldQ: f ? f.getWorldQuaternion(new THREE.Quaternion()) : new THREE.Quaternion(),
         st: { x: 0, z: 0, init: false, on: false, t: 0, dur: 0.2, fx: 0, fz: 0, tx: 0, tz: 0, lift: 0 },
       };
     };
@@ -304,9 +385,19 @@ export class PlayerView {
 
     // 球拍：拍杆沿手骨轴向（-X，手指方向），拍面法线 = 手骨 Z
     this.racket = makeRacket(accent, stringTexture());
-    this.racket.position.set(0, 0.02, 0);
+    this.racket.position.set(0, 0, 0);
     this.racket.rotation.z = Math.PI / 2;
     this.setHand('right');
+
+    // 每帧从绑定局部姿态开始，再叠加动画/IK，禁止程序化旋转累积。
+    this.bindPose = [];
+    model.traverse(o => { if (o.isBone) this.bindPose.push({ bone:o, q:o.quaternion.clone(), p:o.position.clone() }); });
+    this.readyTorso = this.bindPose.filter(rest => [this.bone.spine1, this.bone.spine2, this.bone.neck, this.bone.head].includes(rest.bone));
+    this.strokeKey = ''; this.strokeAge = 1;
+    this.locomotion = new ContactLocomotion();
+    this.hipBind = this.bone.hips ? {p:this.bone.hips.position.clone(),q:this.bone.hips.quaternion.clone()} : null;
+    this.pelvisOffset = new THREE.Vector3();
+    this.hipParentScale = new THREE.Vector3();
 
     // 动画混合
     this.mixer = new THREE.AnimationMixer(model);
@@ -359,7 +450,6 @@ export class PlayerView {
     this.tmpV = new THREE.Vector3();
     this.bodyQInv = new THREE.Quaternion();
     this.dirBody = new THREE.Vector3();
-    this.fwdV = new THREE.Vector3();
     this.rightV = new THREE.Vector3();
     this.legQInv = new THREE.Quaternion();
     this.legPole = new THREE.Vector3();
@@ -379,6 +469,23 @@ export class PlayerView {
     scene.add(this.root, this.blob);
   }
 
+  dispose() {
+    this.mixer.stopAllAction();
+    this.mixer.uncacheRoot(this.model);
+    const geometries = new Set(), materials = new Set(), textures = new Set(), skeletons = new Set();
+    for (const root of [this.root, this.blob]) root.traverse(o => {
+      if (!o.isMesh) return;
+      if (!this.sourceGeometry.has(o.geometry)) geometries.add(o.geometry);
+      if (o.skeleton) skeletons.add(o.skeleton);
+      for (const m of Array.isArray(o.material) ? o.material : [o.material]) {
+        materials.add(m);
+        for (const value of Object.values(m)) if (value?.isTexture && !this.sourceTextures.has(value)) textures.add(value);
+      }
+    });
+    for (const resource of [...geometries, ...materials, ...textures, ...skeletons]) resource.dispose();
+    this.root.removeFromParent(); this.blob.removeFromParent(); this.root.clear();
+  }
+
   /** 球拍换到另一只手（骨轴 -X = 手指方向，拍面法线 = 手骨 Z） */
   setHand(key) {
     const a = this.arms[key] || this.arms.right;
@@ -395,144 +502,42 @@ export class PlayerView {
     this.racket.updateMatrixWorld(true);
   }
 
-  /** 程序化羽毛球步法：并步/滑步 + 近球弓步，脚落地后不再滑动 */
-  updateLegs(dt, rootQ, p, ball, near) {
-    const fwd = this.fwdV.set(0, 0, 1).applyQuaternion(rootQ);
-    const sideV = this.rightV.set(1, 0, 0).applyQuaternion(rootQ);
-    this.legQInv.copy(rootQ).invert();
-
-    const mvx = p.vx || 0;
-    const mvz = p.vz || 0;
-    const mSpeed = Math.hypot(mvx, mvz);
-    const stepGain = clamp(mSpeed / 3.2, 0, 1);
-
-    // 球在地面上的方向（身体坐标），用于弓步方向
-    let ballLx = 0;
-    let ballLz = 1;
-    if (near > 0.01) {
-      const bdx = ball.x - this.root.position.x;
-      const bdz = ball.z - this.root.position.z;
-      const bl = Math.hypot(bdx, bdz) || 1;
-      this.footOffset.set(bdx / bl, 0, bdz / bl).applyQuaternion(this.legQInv);
-      ballLx = this.footOffset.x;
-      ballLz = this.footOffset.z;
-    }
-    const mLocal = this.footOffset.set(mvx, 0, mvz);
-    if (mSpeed > 1e-3) mLocal.normalize().applyQuaternion(this.legQInv);
-    const mlx = mSpeed > 1e-3 ? mLocal.x : 0;
-    const mlz = mSpeed > 1e-3 ? mLocal.z : 0;
-
-    const racketFoot = this.handKey === 'left' ? 'left' : 'right';
-    // 落脚点前瞻：按当前速度预判，避免脚永远落在身体后面
-    const leadX = this.root.position.x + mvx * 0.16;
-    const leadZ = this.root.position.z + mvz * 0.16;
-
-    // 启动步：球刚过到自己这边时的小跳蓄力
-    const onMy = (p.z < 0) === (ball.z < 0) && Math.abs(ball.z) > 0.1;
-    this.splitCool = Math.max(0, this.splitCool - dt);
-    if (onMy && !this.prevOnMy && this.splitCool <= 0) {
-      this.splitT = 0.16;
-      this.splitCool = 0.8;
-    }
-    this.prevOnMy = onMy;
-    this.splitT = Math.max(0, this.splitT - dt);
-    const splitK = this.splitT > 0 ? Math.sin(Math.PI * (1 - this.splitT / 0.16)) : 0;
-
-    // 交叉步：大范围横移时，非持拍脚从身后交叉过去
-    const lateralFast = Math.abs(mlx) > 0.55 && Math.abs(mlx) > Math.abs(mlz) * 1.2;
-
-    for (const key of ['right', 'left']) {
-      const leg = this.legs[key];
-      if (!leg.up || !leg.knee || !leg.foot) continue;
-      const st = leg.st;
-      const isRacket = key === racketFoot;
-
-      // 站位：横向半距；持拍脚略前；移动时朝移动方向预判；近球时持拍脚跨出弓步
-      let lx = leg.side * 0.20;
-      let lz = isRacket ? 0.08 : -0.04;
-      if (stepGain > 0.02) {
-        lx += mlx * stepGain * 0.14;
-        lz += mlz * stepGain * 0.14;
-      }
-      if (near > 0.01) {
-        if (isRacket) {
-          lx += clamp(ballLx, -1, 1) * near * 0.42;
-          lz += clamp(ballLz, -1, 1) * near * 0.55;
-        } else {
-          lz -= near * 0.10;
-        }
-      }
-      // 交叉步：非持拍脚从身后交叉过去，持拍脚只小幅跟进
-      if (lateralFast) {
-        if (isRacket) {
-          lx += mlx * 0.10;
-        } else {
-          lx += mlx * 0.60;
-          lz -= 0.18;
-        }
-      }
-      // 启动步：小跳时站位略宽
-      if (splitK > 0) lx += leg.side * 0.05 * splitK;
-
-      const wx = leadX + sideV.x * lx + fwd.x * lz;
-      const wz = leadZ + sideV.z * lx + fwd.z * lz;
-
-      if (!st.init) {
-        st.x = wx; st.z = wz; st.init = true;
-      } else {
-        const dd = Math.hypot(wx - st.x, wz - st.z);
-        const thresh = near > 0.2 && isRacket ? 0.10 : 0.16;
-        if (!st.on && dd > thresh) {
-          st.on = true;
-          st.t = 0;
-          st.dur = clamp(0.24 - mSpeed * 0.035, 0.12, 0.24);
-          st.fx = st.x; st.fz = st.z;
-          st.tx = wx; st.tz = wz;
-        }
-        if (st.on) {
-          st.t += dt;
-          const k = clamp(st.t / st.dur, 0, 1);
-          const e = k * k * (3 - 2 * k);
-          st.x = st.fx + (st.tx - st.fx) * e;
-          st.z = st.fz + (st.tz - st.fz) * e;
-          st.lift = Math.sin(Math.PI * k) * clamp(0.055 + dd * 0.1, 0.06, 0.12);
-          if (k >= 1) { st.on = false; st.lift = 0; st.x = st.tx; st.z = st.tz; }
-        }
-      }
-
-      // 腿部 IK：髋 → 踝，膝盖朝前
-      const hip = leg.up.getWorldPosition(this.hipW);
-      this.ankleW.set(st.x, this.ankleY + st.lift + splitK * 0.05, st.z);
-      // 够不到时贴着地面把脚拉近，避免脚悬空
-      const maxR = leg.l1 + leg.l2 - 0.02;
-      const dyA = this.ankleW.y - hip.y;
-      const maxH = Math.sqrt(Math.max(0.02, maxR * maxR - dyA * dyA));
-      const hxA = this.ankleW.x - hip.x;
-      const hzA = this.ankleW.z - hip.z;
-      const hdA = Math.hypot(hxA, hzA) || 1e-4;
-      if (hdA > maxH) {
-        this.ankleW.x = hip.x + hxA * (maxH / hdA);
-        this.ankleW.z = hip.z + hzA * (maxH / hdA);
-      }
-
-      this.legPole.copy(fwd).addScaledVector(sideV, leg.side * 0.12).normalize();
-      solveElbow(hip, this.ankleW, leg.l1, leg.l2, this.legPole, this.kneeW);
-      aimBone(leg.up, leg.knee, this.kneeW.clone().sub(hip));
-      leg.up.updateMatrixWorld(true);
-      aimBone(leg.knee, leg.foot, this.ankleW.clone().sub(this.kneeW));
-      leg.knee.updateMatrixWorld(true);
+  /** Contact targets are world-space: stance ankles stay planted while the pelvis moves. */
+  updateLegs() {
+    if (!this.motionState) return;
+    for(const key of ['left','right']){
+      const leg=this.legs[key],foot=this.motionState.feet[key];
+      if(!leg.up||!leg.knee||!leg.foot)continue;
+      const hip=leg.up.getWorldPosition(this.hipW);
+      this.handQ.setFromAxisAngle(Y,foot.yaw).multiply(this.tmpQ.setFromAxisAngle(X,foot.pitch)).multiply(leg.restWorldQ);
+      let bottom=Infinity;
+      for(const corner of leg.soleCorners)bottom=Math.min(bottom,this.tmpV.copy(corner).applyQuaternion(this.handQ).y);
+      const clearance=Math.max(this.ankleY,-bottom+.001);
+      this.ankleW.set(foot.x,clearance+foot.lift+this.jump,foot.z);
+      // A small soft extension limit is retained as a safety net, not a sliding foot planner.
+      const reach=leg.l1+leg.l2-.004,delta=this.tmpV.copy(this.ankleW).sub(hip);
+      if(delta.length()>reach)this.ankleW.copy(hip).add(delta.setLength(reach));
+      // During a pivot, bend over the planted toes even while the chest faces away.
+      this.legPole.set(leg.side*.12,0,1).applyAxisAngle(Y,foot.yaw).normalize();
+      solveElbow(hip,this.ankleW,leg.l1,leg.l2,this.legPole,this.kneeW);
+      aimBone(leg.up,leg.knee,this.kneeW.clone().sub(hip));
+      aimBone(leg.knee,leg.foot,this.ankleW.clone().sub(this.kneeW));
+      // Foot heading/heel-to-toe roll is independent of the torso's turning animation.
+      this.handQ.setFromAxisAngle(Y,foot.yaw).multiply(this.tmpQ.setFromAxisAngle(X,foot.pitch)).multiply(leg.restWorldQ);
+      leg.knee.getWorldQuaternion(this.tmpQ).invert();
+      leg.foot.quaternion.copy(this.tmpQ.multiply(this.handQ));leg.foot.updateMatrixWorld(true);
     }
   }
 
-  update(dt, p, ball) {
+  update(dt, p, ball, context = {}) {
     const isLeft = p.z < 0;
     const root = this.root;
 
     if (!this.inited) {
       this.sx = p.x; this.sz = p.z; this.inited = true;
     }
-    this.sx += (p.x - this.sx) * (1 - Math.exp(-9 * dt));
-    this.sz += (p.z - this.sz) * (1 - Math.exp(-12 * dt));
+    this.sx += (p.x - this.sx) * (1 - Math.exp(-24 * dt));
+    this.sz += (p.z - this.sz) * (1 - Math.exp(-24 * dt));
     root.position.x = this.sx;
     root.position.z = this.sz;
     root.rotation.y = isLeft ? 0 : Math.PI;
@@ -555,32 +560,126 @@ export class PlayerView {
       this.actions.run.setEffectiveWeight(this.wRun);
       this.actions.run.setEffectiveTimeScale(clamp(this.speed / 4.0, 0.8, 1.5));
     }
+    for (const rest of this.bindPose) { rest.bone.quaternion.copy(rest.q); rest.bone.position.copy(rest.p); }
     this.mixer.update(dt);
-
-    const sw = clamp(p.flash || 0, 0, 1);
-    const wantJump = sw > 0.25 && ball.y > 2.05 ? clamp((ball.y - 2.05) * 0.12, 0, 0.26) : 0;
-    this.jump += (wantJump - this.jump) * (1 - Math.exp(-10 * dt));
-
-    const face = isLeft ? 1 : -1;
-    const bx = face * (ball.x - root.position.x);
-    const bz = face * (ball.z - root.position.z);
-    const onMy = isLeft ? ball.z < 0 : ball.z > 0;
-    const dist = Math.hypot(bx, bz);
-    const near = onMy ? clamp(1 - dist / 3.0, 0, 1) : 0;
-
-    // 近球降低重心，配合弓步
-    const crouchWant = 0.02 + Math.pow(near, 1.4) * 0.30;
-    this.crouch += (crouchWant - this.crouch) * (1 - Math.exp(-8 * dt));
-    root.position.y = this.jump - this.crouch;
-
     root.updateMatrixWorld(true);
-    const rootQ = this.rootQ;
-    root.getWorldQuaternion(rootQ);
 
-    // 持拍手由手机端设置决定
-    const handKey = p.hand === 'left' ? 'left' : 'right';
-    this.setHand(handKey);
-    const arm = this.arms[handKey] || this.arms.right;
+    const sw=clamp(p.flash||0,0,1),face=isLeft?1:-1;
+    const bx=face*(ball.x-root.position.x),bz=face*(ball.z-root.position.z);
+    const onMy=isLeft?ball.z<0:ball.z>0,dist=Math.hypot(bx,bz);
+    const ballInPlay = context.phase !== 'point' && context.phase !== 'over';
+    const near=onMy&&ballInPlay?clamp(1-dist/3,0,1):0;
+    const lowLunge=near*clamp(1.75-ball.y,0,1);
+    const handKey=p.hand==='left'?'left':'right';this.setHand(handKey);
+    const arm=this.arms[handKey]||this.arms.right;
+    const stroke=p.stroke,key=stroke?`${stroke.id}:${!!stroke.hit}`:'';
+    const newStroke = key !== this.strokeKey;
+    if(newStroke){this.strokeKey=key;this.strokeAge=stroke?.contactAge??stroke?.age??1;}
+    else this.strokeAge=Math.max(this.strokeAge+dt,stroke?.age??0);
+    const active=stroke&&this.strokeAge<.48;
+    const rear = p.rearMove;
+    const rearSwing = active && stroke.shot === 'drive';
+    const sliceSwing = active && stroke.shot === 'slice';
+    const authoredBody = rear?.kind === 'slice' ? sampleBackhand(rear.progress) : null;
+    const slice = sliceSwing ? sampleBackhandStroke(this.strokeAge, stroke.direction) : authoredBody;
+    const bodySlice = authoredBody || slice;
+    const sliceAxes = bodySlice && backhandAxes(isLeft ? 'left' : 'right', handKey);
+    // Keep ready hands through the split, and release them as the turn completes
+    // while the feet finish their authored recovery.
+    const armLoad = authoredBody ? smooth(clamp((rear.progress - .16) / .16, 0, 1)) : 1;
+    const armRelease = authoredBody ? smooth(clamp((rear.progress - .65) / .12, 0, 1)) : 0;
+    const sliceArms = (rear?.weight ?? 1) * armLoad * (1 - armRelease);
+    const neutralReady = (1 - smooth(clamp(this.speed / 1.2, 0, 1))) * (1 - lowLunge);
+    // Returning the arms to the Blender ready pose follows torso progress, not
+    // the completion of the feet. Keep the same pose through the last step.
+    const readyWeight = active ? 0 : authoredBody
+      ? 1 - armLoad * (1 - armRelease)
+      : rear ? 0 : neutralReady;
+    for (const { bone, q } of this.readyTorso) bone.quaternion.slerp(q, readyWeight);
+    const releaseStart = CONTACT_TIME + CONTACT_WINDOW;
+    const hasAuthoredSwing = sliceSwing && authoredBody;
+    const sliceRelease = hasAuthoredSwing ? smooth(clamp((this.strokeAge - releaseStart) / (.43 - releaseStart), 0, 1)) : 0;
+    const sliceWindup = hasAuthoredSwing ? 1 - smooth(clamp(this.strokeAge / (CONTACT_TIME - CONTACT_WINDOW), 0, 1)) : 0;
+    const sliceBlend = Math.max(sliceWindup, sliceRelease);
+    let frame = active && stroke.anchor
+      ? (newStroke && stroke.contactPose) || contactFrame({ ...p, side: isLeft ? 'left' : 'right', hand: handKey }, stroke,
+        sliceRelease > 0 ? releaseStart : this.strokeAge)
+      : null;
+    // Blend the rendered racket into the contact window and back onto the
+    // authored motion. The game still resolves the same contact frame.
+    if (frame && sliceBlend > 0) frame = blendSliceRacket(frame, authoredBody, sliceAxes, root.position, sliceBlend);
+    // Reference profile contact is recalculated again after the pelvis/torso solve.
+    const profile=sampleStrokePose(active?this.strokeAge:0,stroke?.shot||'clear',handKey==='left'?-1:1,{x:0,y:clamp(p.y,.8,2.65),z:.55},stroke?.variant);
+    // Mixamo's right shoulder is on local -X when the character faces +Z.
+    profile.freeHand.x *= -1;
+    if ((rear && rear.kind !== 'slice') || rearSwing) {
+      const handSign = handKey === 'left' ? 1 : -1;
+      const unwind = rearSwing ? clamp((this.strokeAge - .06) / .14, 0, 1) : 0;
+      const prep = rear?.turn ?? 0;
+      profile.pelvisYaw = handSign * (prep * .46 - unwind * .22);
+      profile.torsoYaw = handSign * (prep * .90 - unwind * .39);
+      const lowContact = rearSwing && stroke.anchor ? clamp((1.44 - stroke.anchor.y) / .70, 0, 1) : 0;
+      profile.chestPitch = (rear?.load ?? 0) * (.14 + Math.max(rear?.low ?? 0, lowContact) * .25);
+      profile.elbowLift = rearSwing ? .21 * (1 - unwind) : .16 * prep;
+      profile.freeHand.x = -handSign * (.32 + .16 * prep);
+      profile.freeHand.z -= .38 * prep;
+    }
+    if (bodySlice) {
+      const mirror = handKey === 'left' ? -1 : 1;
+      const yaw = bodySlice.yaw > 2.5 ? bodySlice.yaw - 2 * Math.PI : bodySlice.yaw;
+      const weight = rear?.weight ?? 1;
+      profile.pelvisYaw = yaw * mirror * weight * .81;
+      profile.torsoYaw = yaw * mirror * weight;
+      profile.freeHand.x += ((bodySlice.freeHand.x - bodySlice.hip.x) * sliceAxes.x * (isLeft ? 1 : -1) - profile.freeHand.x) * sliceArms;
+      profile.freeHand.y += (bodySlice.freeHand.y - profile.freeHand.y) * sliceArms;
+      profile.freeHand.z += (bodySlice.hip.z - bodySlice.freeHand.z - profile.freeHand.z) * sliceArms;
+    }
+    this.strokePose=profile;
+    if (!authoredBody && this.sliceFootHandoff) {
+      this.locomotion.adoptStance(root.position, this.sliceFootHandoff);
+      this.sliceFootHandoff = null;
+    }
+    this.motionState=this.locomotion.update(dt,{x:root.position.x,z:root.position.z,vx:p.vx||0,vz:p.vz||0,yaw:isLeft?0:Math.PI,hand:handKey,
+      near:lowLunge,ballX:ball.x,ballZ:ball.z,
+      legReach:Math.min(this.legs.left.l1+this.legs.left.l2,this.legs.right.l1+this.legs.right.l2),
+      opponentImpactId:context.opponentImpactId,opponentImpactAge:context.opponentImpactAge});
+    if (rear) {
+      const blend = rear.weight;
+      const footBlend = rear.footWeight ?? blend;
+      if (authoredBody) this.sliceFootHandoff = Object.values(rear.feet).every(foot => foot.stance) ? rear.feet : null;
+      for (const side of ['left', 'right']) {
+        const base = this.motionState.feet[side];
+        const target = rear.feet[side];
+        for (const key of ['x', 'z', 'yaw', 'lift', 'pitch']) base[key] += (target[key] - base[key]) * footBlend;
+        if (footBlend > .7) base.stance = target.stance;
+      }
+      for (const key of ['x', 'z', 'drop']) this.motionState.pelvis[key] += (rear.pelvis[key] - this.motionState.pelvis[key]) * blend;
+      this.motionState.splitHeight *= 1 - footBlend;
+    }
+    const smashRise = frame && stroke.shot === 'smash'
+      ? Math.sin(Math.PI * clamp((this.strokeAge + .015) / .34, 0, 1)) * clamp(stroke.anchor.y - 2.13, .18, .58)
+      : 0;
+    this.jump=Math.max(this.motionState.splitHeight,smashRise);
+    const lowDrive = rearSwing && stroke.anchor
+      ? clamp((1.43 - stroke.anchor.y) / .66, 0, 1) * Math.sin(Math.PI * clamp(this.strokeAge / .37, 0, 1)) * .12
+      : 0;
+    const desiredDrop=.075+(readyPose.hipDrop-.075)*readyWeight+clamp(this.speed/3.6,0,1)*.09+this.motionState.pelvis.drop+profile.load*.025+lowDrive;
+    if (!this.crouch) this.crouch = desiredDrop;
+    this.crouch+=(clamp(desiredDrop,.075,rear?.weight > .5 ? .40 : .30)-this.crouch)*(1-Math.exp(-15*dt));
+    root.position.y=this.jump;
+    root.updateMatrixWorld(true);
+    if(this.bone.hips&&this.hipBind){
+      const hips=this.bone.hips,body=this.motionState.pelvis;
+      hips.position.copy(this.hipBind.p);hips.quaternion.copy(this.hipBind.q);
+      hips.parent.getWorldQuaternion(this.tmpQ).invert();hips.parent.getWorldScale(this.hipParentScale);
+      this.pelvisOffset.set(body.x,-this.crouch,body.z).applyQuaternion(this.tmpQ).divide(this.hipParentScale);
+      hips.position.add(this.pelvisOffset);
+      hips.quaternion.multiply(this.tmpQ.setFromAxisAngle(Y,profile.pelvisYaw));
+      hips.quaternion.multiply(this.tmpQ.setFromAxisAngle(X,body.pitch));
+      hips.quaternion.multiply(this.tmpQ.setFromAxisAngle(new THREE.Vector3(0,0,1),body.roll));
+      hips.updateMatrixWorld(true);
+    }
+    const rootQ=this.rootQ;root.getWorldQuaternion(rootQ);
 
     // 手机姿态 → 手臂/球拍
     // 握拍时手机机头就是拍杆方向，屏幕法线就是拍面法线
@@ -594,12 +693,12 @@ export class PlayerView {
     if (this.bone.spine1) {
       const aimSide = clamp(this.phoneAim.x, -1, 1);
       const twist = clamp(
-        clamp(bx * 0.10, -0.28, 0.28)
-          + (aimSide * 0.30 + (p.dir || 0) * sw * 0.32) * arm.side,
+        profile.torsoYaw-profile.pelvisYaw + clamp(bx * 0.05, -0.12, 0.12)
+          + (aimSide * 0.12 + (p.dir || 0) * sw * 0.12) * arm.side,
         -0.55, 0.55
       );
-      this.bone.spine1.quaternion.multiply(this.tmpQ.setFromAxisAngle(Y, -twist));
-      this.bone.spine1.quaternion.multiply(this.tmpQ.setFromAxisAngle(X, -near * 0.09));
+      this.bone.spine1.quaternion.multiply(this.tmpQ.setFromAxisAngle(Y, twist));
+      this.bone.spine1.quaternion.multiply(this.tmpQ.setFromAxisAngle(X, profile.chestPitch+(!active?lowLunge*.1:0)+readyPose.chestLean*readyWeight));
       this.bone.spine1.updateMatrixWorld(true);
     }
     if (this.bone.spine2) {
@@ -607,72 +706,153 @@ export class PlayerView {
       this.bone.spine2.updateMatrixWorld(true);
     }
 
-    // 头部追球
-    if (this.bone.head && this.bone.headEnd) {
-      this.ballW.set(ball.x, ball.y, ball.z);
-      const headPos = this.bone.head.getWorldPosition(this.tmpV);
-      aimBone(this.bone.head, this.bone.headEnd, this.ballW.clone().sub(headPos));
+    // 头骨的子骨方向是头顶，不能直接指向球，否则整个头会横倒。
+    if (this.bone.head) {
+      const look = ballInPlay ? 1 : 1 - readyWeight;
+      const yaw = clamp(Math.atan2(bx,Math.max(1,Math.abs(bz))),-0.45,0.45) * look;
+      const pitch = clamp((1.7-ball.y)*0.10,-0.18,0.18) * look - readyPose.chestLean*.72*readyWeight;
+      this.bone.head.quaternion.multiply(this.tmpQ.setFromAxisAngle(Y,yaw));
+      this.bone.head.quaternion.multiply(this.tmpQ.setFromAxisAngle(X,pitch));
+      this.bone.head.updateMatrixWorld(true);
+    }
+
+    // Shift the shoulder with the body before solving either arm or planted leg.
+    if (frame && this.bone.hips && arm.arm) {
+      const hips = this.bone.hips;
+      arm.arm.getWorldPosition(this.shoulderW);
+      this.pelvisOffset.set(frame.center.x, frame.center.y, frame.center.z)
+        .addScaledVector(this.shaftDir.set(frame.shaft.x, frame.shaft.y, frame.shaft.z), -.535)
+        .sub(this.shoulderW);
+      const excess = this.pelvisOffset.length() - (arm.l1 + arm.l2 - .024);
+      if (excess > 0) {
+        hips.parent.getWorldQuaternion(this.tmpQ).invert();
+        this.pelvisOffset.setLength(Math.min(.29, excess) * (1 - sliceBlend)).applyQuaternion(this.tmpQ).divide(this.hipParentScale);
+        hips.position.add(this.pelvisOffset);
+        hips.updateMatrixWorld(true);
+      }
     }
 
     // 步法 IK（并步/跨步/弓步）
-    this.updateLegs(dt, rootQ, p, ball, near);
+    this.updateLegs();
 
     // 持拍手 IK
     const rArm = arm.arm, rFore = arm.fore, rHand = arm.hand;
     if (rArm && rFore && rHand) {
       const shoulderW = rArm.getWorldPosition(this.shoulderW);
 
-      // 准备位由手机机头方向驱动：机头向上 → 拍子向上，机头向左 → 大臂向左
-      this.ready.copy(this.phoneAimW).multiplyScalar(READY_REACH).add(shoulderW);
-      this.ballW.set(ball.x, ball.y, ball.z);
-      const ballDist = this.ballW.distanceTo(shoulderW);
-      if (onMy && ballDist < 3.2) {
-        this.target.copy(this.ballW);
-        this.target.lerp(this.ready, clamp((ballDist - 1.9) / 1.3, 0, 0.65));
+      // 手机只小幅影响准备位，击球使用明确的引拍 → 触球 → 收拍轨迹。
+      const contact = new THREE.Vector3(0, clamp(p.y,0.8,2.65), 0.55);
+      if (stroke?.contact) {
+        contact.set(stroke.contact.x-root.position.x, stroke.contact.y-root.position.y, stroke.contact.z-root.position.z);
+        contact.applyQuaternion(this.bodyQInv.copy(rootQ).invert());
+      }
+      const point = sampleStrokePose(active ? this.strokeAge : 0, stroke?.shot || 'clear', handKey==='left'?-1:1, contact).target;
+      if (!active) {
+        point.x = -.31 * arm.side;
+        point.y = 1.43 - .27 * this.crouch;
+        point.z = .68;
+      }
+      if (!active && authoredBody) {
+        const weight = sliceArms;
+        point.x += ((authoredBody.center.x - authoredBody.hip.x) * sliceAxes.x * (isLeft ? 1 : -1) - point.x) * weight;
+        point.y += (authoredBody.center.y - point.y) * weight;
+        point.z += ((authoredBody.hip.z - authoredBody.center.z) - point.z) * weight;
+      } else if (!active && rear && rear.kind !== 'slice') {
+        const turn = rear.turn;
+        point.x += ((handKey === 'left' ? .56 : -.56) - point.x) * turn;
+        point.y += (1.36 - point.y) * turn;
+        point.z -= .84 * turn;
+      } else if (!active) {
+        // Anticipate a low shuttle with the racket in front of the leading knee.
+        // Confirmed strokes retain their authoritative contact trajectory.
+        point.y += (Math.max(.45,ball.y-root.position.y+.12)-point.y)*lowLunge;
+        point.z += .15*lowLunge;
+        point.x += clamp(this.phoneAim.x,-0.5,0.5)*0.12;
+        point.y += clamp(this.phoneAim.y,-0.5,0.5)*0.15;
+      }
+      if (readyWeight > 0) {
+        const [x, y, z] = readyPose.racketHand;
+        const [dx, dy, dz] = readyPose.shaft;
+        point.x += ((x + dx * .535) * arm.side - point.x) * readyWeight;
+        point.y += (y + dy * .535 + readyPose.hipDrop - this.crouch - point.y) * readyWeight;
+        point.z += (z + dz * .535 - point.z) * readyWeight;
+      }
+      this.target.set(point.x,point.y,point.z).applyQuaternion(rootQ).add(root.position);
+      // 由拍面中心反求腕部，拍杆长度与实际几何一致；肘和腕分别求解。
+      if (frame) {
+        this.target.set(frame.center.x, frame.center.y, frame.center.z);
+        this.shaftDir.set(frame.shaft.x, frame.shaft.y, frame.shaft.z);
+      } else if (!active) {
+        this.tmpV.fromArray(readyPose.shaft);
+        this.tmpV.x *= arm.side;
+        this.shaftDir.set(-.12 * arm.side, .83 - lowLunge * .36, .55).normalize().lerp(this.tmpV, readyWeight).normalize().applyQuaternion(rootQ);
       } else {
-        this.target.copy(this.ready);
+        this.shaftDir.copy(this.target).sub(shoulderW).normalize();
+        this.shaftDir.applyAxisAngle(this.rightV.set(1,0,0).applyQuaternion(rootQ),profile.shaftLag);
       }
-
-      const dirW = this.tmpV.copy(this.target).sub(shoulderW);
-      let tLen = dirW.length();
-      if (tLen < 0.2) { dirW.copy(this.ready).sub(shoulderW); tLen = dirW.length(); }
-      dirW.normalize();
-
-      // 肩关节硬限位：只能在身体前半球 + 合理仰角内，手臂不能绕到身后
-      this.bodyQInv.copy(rootQ).invert();
-      this.dirBody.copy(dirW).applyQuaternion(this.bodyQInv);
-      const yaw = Math.atan2(this.dirBody.x, this.dirBody.z);
-      const el = Math.asin(clamp(this.dirBody.y, -1, 1));
-      const yawC = clamp(yaw, -ARM_YAW_MAX, ARM_YAW_MAX);
-      const elC = clamp(el, ARM_EL_MIN, ARM_EL_MAX);
-      if (yawC !== yaw || elC !== el) {
-        const ce = Math.cos(elC);
-        this.dirBody.set(Math.sin(yawC) * ce, Math.sin(elC), Math.cos(yawC) * ce);
-        dirW.copy(this.dirBody).applyQuaternion(rootQ).normalize();
+      if (!active && authoredBody && sliceArms > 0) {
+        this.shaftDir.lerp(this.tmpV.set(authoredBody.shaft.x * sliceAxes.x, authoredBody.shaft.y, authoredBody.shaft.z * sliceAxes.z), sliceArms).normalize();
       }
-
-      const wristDist = clamp(tLen - 0.60, 0.18, arm.l1 + arm.l2 - 0.02);
-      this.wristW.copy(shoulderW).addScaledVector(dirW, wristDist);
-
-      this.pole.set(-0.75 * arm.side, -0.62, -0.2).applyQuaternion(rootQ);
-      solveElbow(shoulderW, this.wristW, arm.l1, arm.l2, this.pole, this.elbowW);
-
-      aimBone(rArm, rFore, this.elbowW.clone().sub(shoulderW));
-      rArm.updateMatrixWorld(true);
-
-      // 小臂和拍杆共线；小臂随拍面滚转（掌面/网面/小臂肌肉面同向）
-      this.shaftDir.copy(this.wristW).sub(this.elbowW);
-      if (this.shaftDir.lengthSq() < 0.02) this.shaftDir.copy(this.phoneAimW);
-      basisQuatBoneAxis(arm.axis, this.shaftDir, this.normal, this.handQ);
-
-      // 小臂世界姿态由拍子姿态反推：腕部保持静止关系，不会出现拧麻花
-      const foreQ = this.tmpQ.copy(this.handQ).multiply(arm.restQInv);
-      const parentQ = new THREE.Quaternion();
-      rFore.parent.getWorldQuaternion(parentQ);
-      rFore.quaternion.copy(parentQ.invert().multiply(foreQ));
-      rFore.updateMatrixWorld(true);
-      rHand.quaternion.copy(arm.restQ);
+      this.wristW.copy(this.target).addScaledVector(this.shaftDir,-0.535);
+      const armReach = arm.l1 + arm.l2 - 0.012;
+      const wristOffset = this.tmpV.copy(this.wristW).sub(shoulderW);
+      if (wristOffset.length() > armReach) this.wristW.copy(shoulderW).add(wristOffset.setLength(armReach));
+      this.pole.set((.65+profile.load*.15)*arm.side,-.6+profile.elbowLift,-.2-profile.load*.25)
+        .lerp(this.tmpV.set(-.32*arm.side,-1,-.25), readyWeight).applyQuaternion(rootQ);
+      if (slice) {
+        this.tmpV.set(root.position.x + (slice.elbow.x - slice.hip.x) * sliceAxes.x,
+          slice.elbow.y, root.position.z + (slice.elbow.z - slice.hip.z) * sliceAxes.z).sub(shoulderW);
+        if (sliceBlend > 0) this.tmpV.lerp(this.elbowW.set(
+          root.position.x + (authoredBody.elbow.x - authoredBody.hip.x) * sliceAxes.x,
+          authoredBody.elbow.y,
+          root.position.z + (authoredBody.elbow.z - authoredBody.hip.z) * sliceAxes.z
+        ).sub(shoulderW), sliceBlend);
+        this.pole.normalize().lerp(this.tmpV.normalize(), sliceArms);
+      }
+      solveElbow(shoulderW,this.wristW,arm.l1,arm.l2,this.pole,this.elbowW);
+      aimBone(rArm,rFore,this.elbowW.clone().sub(shoulderW));
+      aimBone(rFore,rHand,this.wristW.clone().sub(this.elbowW));
+      this.normal.set(0,0,1).applyQuaternion(rootQ).applyAxisAngle(this.shaftDir,profile.forearmRoll);
+      if (readyWeight > 0) {
+        this.tmpV.copy(this.shaftDir).multiplyScalar(arm.axis).cross(Y).normalize();
+        this.normal.lerp(this.tmpV, readyWeight);
+      }
+      if (frame) this.normal.set(frame.normal.x, frame.normal.y, frame.normal.z);
+      if (!active && authoredBody) {
+        this.normal.lerp(this.tmpV.set(authoredBody.normal.x * sliceAxes.x, authoredBody.normal.y, authoredBody.normal.z * sliceAxes.z), sliceArms).normalize();
+      }
+      basisQuatBoneAxis(arm.axis,this.shaftDir,this.normal,this.handQ);
+      rFore.getWorldQuaternion(this.tmpQ).invert();
+      rHand.quaternion.copy(this.tmpQ.multiply(this.handQ));
+      this.poseFingers(arm, GRIP_CURL);
+      if (slice) arm.sliceFingers.forEach((finger, i) => {
+        if (!finger) return;
+        this.tmpV.set(0, i === 0 ? 1 : 0, i === 0 ? 0 : 1);
+        finger.quaternion.multiply(this.tmpQ.setFromAxisAngle(this.tmpV, -arm.axis * slice.grip[i] * sliceArms));
+      });
       rHand.updateMatrixWorld(true);
+    }
+
+    // 非持拍手保持平衡，避免沿用机器人跑步时的僵直摆臂。
+    const free = this.arms[handKey === 'left' ? 'right' : 'left'];
+    if (free?.arm && free.fore && free.hand) {
+      const shoulder = free.arm.getWorldPosition(this.shoulderW);
+      this.wristW.set(profile.freeHand.x,profile.freeHand.y,profile.freeHand.z);
+      if (!active) this.wristW.y -= this.crouch * (1 - (authoredBody ? sliceArms : 0)) * .4;
+      const [x, y, z] = readyPose.freeHand;
+      this.wristW.lerp(this.tmpV.set(x * arm.side, y + readyPose.hipDrop - this.crouch, z), readyWeight).applyQuaternion(rootQ).add(root.position);
+      this.pole.set(.8*free.side,-.3,-.2).lerp(this.tmpV.set(-.32*free.side,-1,-.25), readyWeight).applyQuaternion(rootQ);
+      solveElbow(shoulder,this.wristW,free.l1,free.l2,this.pole,this.elbowW);
+      aimBone(free.arm,free.fore,this.elbowW.clone().sub(shoulder));
+      aimBone(free.fore,free.hand,this.wristW.clone().sub(this.elbowW));
+      if (readyWeight > 0) {
+        this.tmpV.copy(this.wristW).sub(this.elbowW).normalize();
+        this.normal.copy(this.tmpV).multiplyScalar(free.axis).cross(Y);
+        basisQuatBoneAxis(free.axis,this.tmpV,this.normal,this.handQ);
+        free.fore.getWorldQuaternion(this.tmpQ).invert();
+        free.hand.quaternion.slerp(this.tmpQ.multiply(this.handQ), readyWeight);
+      }
+      this.poseFingers(free, RELAXED_CURL);
     }
 
     // 软影
@@ -683,5 +863,12 @@ export class PlayerView {
 
     this.racketFlash = Math.max(0, this.racketFlash - dt * 3.4);
     if (this.racket) this.racket.userData.frameMat.emissiveIntensity = this.racketFlash * 2.2;
+  }
+
+  poseFingers(arm, curl) {
+    for (const { bone, rest, joint } of arm.fingers) {
+      bone.quaternion.copy(rest).multiply(this.tmpQ.setFromAxisAngle(Z, -arm.axis * curl[joint - 1]));
+    }
+    arm.hand.updateMatrixWorld(true);
   }
 }

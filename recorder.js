@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { randomUUID } from 'node:crypto';
 
 // ============================================================
 // 手机体感数据采集：每个手柄一次会话，逐行 JSON（JSONL）
@@ -7,12 +8,8 @@ import path from 'path';
 // ============================================================
 
 const ROOT = process.env.RECORD_DIR || path.join(process.cwd(), 'data');
-const SESSIONS = path.join(ROOT, 'sessions');
 const POSE_HZ = Number(process.env.RECORD_POSE_HZ || 20);
-const POSE_DT = 1000 / POSE_HZ;
-
-let enabled = process.env.RECORD !== '0';
-let cachedLAN = '';
+const TRAINING_EVENTS = new Set(['start', 'attempt', 'result', 'exclude', 'complete', 'stop']);
 
 function stamp(d = new Date()) {
   const p = (n, w = 2) => String(n).padStart(w, '0');
@@ -23,21 +20,25 @@ function safeName(s) {
   return String(s || '').replace(/[^a-zA-Z0-9._-]+/g, '-').slice(0, 48);
 }
 
-class Recorder {
-  constructor() {
+export class Recorder {
+  constructor({ root = ROOT, enabled = process.env.RECORD !== '0', poseHz = POSE_HZ } = {}) {
+    this.enabled = !!enabled;
+    this.dir = path.join(root, 'sessions');
+    this.poseHz = poseHz;
+    this.cachedLAN = '';
     this.sessions = new Map();
     this.count = 0;
     this.lastFile = '';
     this.lastError = '';
   }
 
-  setLAN(ip) { cachedLAN = ip; }
+  setLAN(ip) { this.cachedLAN = ip; }
 
   status() {
     return {
-      on: enabled,
-      dir: SESSIONS,
-      poseHz: POSE_HZ,
+      on: this.enabled,
+      dir: this.dir,
+      poseHz: this.poseHz,
       active: this.sessions.size,
       total: this.count,
       lastFile: this.lastFile,
@@ -46,24 +47,31 @@ class Recorder {
   }
 
   toggle(on) {
-    enabled = !!on;
-    if (!enabled) for (const id of [...this.sessions.keys()]) this.close(id, 'recording off');
-    return enabled;
+    this.enabled = !!on;
+    if (!this.enabled) for (const id of [...this.sessions.keys()]) this.close(id, 'recording off');
+    return this.enabled;
   }
 
   /** 手柄加入场地时开会话；同一 socket 重复开会自动结束上一份 */
   open(id, meta = {}) {
-    if (!enabled) return null;
+    if (!this.enabled) return null;
     this.close(id, 'reopen');
     try {
-      fs.mkdirSync(SESSIONS, { recursive: true });
+      fs.mkdirSync(this.dir, { recursive: true });
       const ip = safeName(meta.ip);
       const slot = safeName(meta.slot || 'unassigned');
-      const file = path.join(SESSIONS, `${stamp()}_${slot}_${ip || 'local'}.jsonl`);
-      const stream = fs.createWriteStream(file, { flags: 'a' });
+      const file = path.join(this.dir, `${stamp()}_${slot}_${ip || 'local'}_${randomUUID()}.jsonl`);
+      // Open now so training cannot start against a path that fails to open later.
+      const fd = fs.openSync(file, 'wx');
+      const stream = fs.createWriteStream(file, { fd });
+      stream.on('error', (error) => {
+        sess.error = error.message;
+        this.lastError = error.message;
+        console.warn('[记录] 写入失败:', error.message);
+      });
       const sess = {
         file, stream, openedAt: Date.now(), lastPose: 0,
-        seq: 0, recent: [],
+        seq: 0, recent: [], error: '',
         meta: {
           v: 1,
           slot: meta.slot || null,
@@ -73,7 +81,7 @@ class Recorder {
           viewport: meta.viewport || null,
           level: meta.level || 'normal',
           mode: meta.mode || 'solo',
-          lan: cachedLAN,
+          lan: this.cachedLAN,
         },
       };
       this.sessions.set(id, sess);
@@ -101,12 +109,29 @@ class Recorder {
   }
 
   write(sess, obj) {
-    if (!sess || !sess.stream.writable) return;
+    if (!sess || sess.error || !sess.stream.writable || sess.stream.destroyed || sess.stream.writableEnded || sess.stream.errored) return false;
     try {
       sess.stream.write(JSON.stringify(obj) + '\n');
+      // write(false) is accepted into the stream buffer; it is not a write failure.
+      return true;
     } catch (e) {
-      this.lastError = String(e.message || e);
+      sess.error = this.lastError = String(e.message || e);
+      return false;
     }
+  }
+
+  isRecording(id) {
+    const sess = this.sessions.get(id);
+    return !!(this.enabled && sess && !sess.error && sess.stream.writable &&
+      !sess.stream.destroyed && !sess.stream.writableEnded && !sess.stream.errored);
+  }
+
+  /** 提示标签、输入和观察结果由调用方校验后传入，重试以 exclude 追加。 */
+  training(id, event) {
+    if (!this.isRecording(id) || !event || typeof event !== 'object' || Array.isArray(event) ||
+      !TRAINING_EVENTS.has(event.event)) return false;
+    const sess = this.sessions.get(id);
+    return this.write(sess, { ...event, type: 'training', t: this.ms(sess) });
   }
 
   bySlot(slot) {
@@ -121,7 +146,7 @@ class Recorder {
     const sess = this.sessions.get(id);
     if (!sess || !Array.isArray(q) || q.length !== 4) return;
     const now = Date.now();
-    if (now - sess.lastPose < POSE_DT) return;
+    if (now - sess.lastPose < 1000 / this.poseHz) return;
     sess.lastPose = now;
     this.write(sess, {
       type: 'pose',
@@ -161,6 +186,8 @@ class Recorder {
       elMin: round(data.elMin, 4),
       elAtPeak: round(data.elAtPeak, 4),
       sweepDeg: round(data.sweepDeg, 1),
+      yawSweep: round(data.yawSweep, 4),
+      controlVersion: 2,
       lag: round(data.lag, 1),
     };
     sess.recent.push(rec);
@@ -196,7 +223,7 @@ class Recorder {
     });
   }
 
-  miss(slot, { swingId, ball } = {}) {
+  miss(slot, { swingId, ball, reason } = {}) {
     const [, sess] = this.bySlot(slot);
     if (!sess) return;
     let rec = null;
@@ -208,6 +235,7 @@ class Recorder {
     if (rec) rec.missAt = Date.now();
     this.write(sess, {
       type: 'miss',
+      reason: reason || 'late',
       t: this.ms(sess),
       seq: rec ? rec.seq : null,
       slot,
@@ -232,7 +260,7 @@ class Recorder {
 
   /** 进程退出前把缓冲写盘 */
   flushAll() {
-    for (const [id] of [...this.sessions.keys()]) this.close(id, 'shutdown');
+    for (const id of [...this.sessions.keys()]) this.close(id, 'shutdown');
   }
 }
 
