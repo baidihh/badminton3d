@@ -59,3 +59,11 @@ npm run characters:build
 - `PORT=3103 PORT_HTTPS=3546 npm run dev:motion` 一起启动动作监听和开发预览。有效动作更新后服务会自动重载，重新打开或刷新页面即可试玩。服务器重载会重置当前本地对局，边打比赛时可只开 `motion:watch`，打完后重启预览。
 
 若两个项目的位置不同，设置 `COURT_LAB_DIR` 为 Court Lab 的绝对路径。现有反手动作约定使用 `backhand_straight`、`backhand_cross` 两个片段，保留 Xbot 骨骼及 `RacketGrip`、`RacketContact`、`RacketFaceNormal` 标记。目前触球基准仍为片段 50%；同动作的关键帧、姿态和回中可以反复导出更新。新增另一种技术动作时，游戏端需为它登记动作名、触球阶段和触发条件，后续导出可以复用这条流程。
+
+### 共用角色与动作校验
+
+游戏项目维护 `art/characters/roster/*.blend` 和九套导出角色。Court Lab 可运行 `npm run characters:sync` 导入这些角色，在相同教学骨架上播放和检查技术动作。角色外形在本项目编辑，技术动作在 Court Lab 编辑，双方通过 GLB 复用资产。
+
+动作同步默认查找同级 `forehand-lab`，也接受命令参数或 `COURT_LAB_DIR`。新版 Court Lab 每次导出会同时生成 `motion-manifest.json`。导入校验文件摘要、骨架协议、坐标、片段时长、球拍标记及反手触球时机，然后用待发布数据运行步法、骨骼和九角色回归。监听同时覆盖 GLB 与 manifest，两者导出完成后重试导入。历史 GLB 缺少 manifest 时使用原采样校验，并打印兼容模式提示。
+
+目前此同步流程使用直线、斜线两个反手片段。Court Lab 的完整动作目录可作为后续技术接入依据，新增片段仍需结合游戏的来球判定、可达范围与触球逻辑接入。

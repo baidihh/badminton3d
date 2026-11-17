@@ -14,7 +14,10 @@ for (const id of ids) {
 }
 const selected = ids.length ? CHARACTERS.filter(character => ids.includes(character.id)) : CHARACTERS;
 const macBlender = '/Applications/Blender.app/Contents/MacOS/Blender';
-const blender = process.env.BLENDER_PATH || (existsSync(macBlender) ? macBlender : 'blender');
+const blender = process.env.BLENDER_PATH || [
+  macBlender,
+  path.join(root, '../tools/blender-runtime/blender-4.5.16-windows-x64/blender.exe'),
+].find(candidate => existsSync(candidate)) || 'blender';
 const scratch = await fs.mkdtemp(path.join(os.tmpdir(), 'courtside-roster-'));
 
 try {

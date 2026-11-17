@@ -3,12 +3,25 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { AnimationMixer, LoopOnce, Vector3 } from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { validateMotionManifest } from './motion-import.mjs';
 
 const [source, output] = process.argv.slice(2);
 if (!source || !output) throw new Error('请用 npm run motion:sync 运行带验证的导入流程。');
 const bytes = await readFile(resolve(source, 'dist/models/athlete-animations.glb'));
 const checksum = createHash('sha256').update(bytes).digest('hex');
+const manifest = await readFile(resolve(source, 'dist/models/motion-manifest.json'), 'utf8').then(JSON.parse).catch(error => {
+  if (error.code === 'ENOENT') return null;
+  throw error;
+});
+if (manifest) validateMotionManifest(manifest, bytes);
+else console.warn('兼容模式：源导出缺少 motion-manifest.json，使用原有 GLB 采样和动作回归校验。');
 const asset = await new GLTFLoader().parseAsync(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength), '');
+if (manifest) {
+  for (const entry of manifest.clips) {
+    const clip = asset.animations.find(clip => clip.name === entry.name);
+    if (!clip || Math.abs(clip.duration - entry.duration) > .0001) throw new Error(`动作包片段不匹配 ${entry.name}`);
+  }
+}
 const root = asset.scene;
 const bonesByName = new Map();
 root.traverse(node => {
