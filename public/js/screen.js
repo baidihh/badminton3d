@@ -8,6 +8,8 @@ import { isCharacterId } from './characters.js';
 import * as THREE from 'three';
 import { PlayerView, loadPlayerGLTF } from './player.js';
 import { mountTrainingUI } from './training-ui.js';
+import { loadFabricTextures } from './athlete-materials.js';
+import { HDRLoader } from 'three/addons/loaders/HDRLoader.js';
 
 // ============================================================
 // 世界常量（与服务器一致）
@@ -409,6 +411,23 @@ for (const x of [-3.08, 3.08]) {
 }
 
 applyCoastalArena({scene,renderer,floor,outer,key,rim,warm,netMesh,netTape});
+const refined = new URLSearchParams(location.search).get('look') !== 'basic';
+let surfaceTextures = {};
+if (refined) {
+  const [fabric, environment] = await Promise.allSettled([
+    loadFabricTextures('/assets/', renderer.capabilities.getMaxAnisotropy()),
+    new HDRLoader().loadAsync('/assets/studio_small_09_1k.hdr'),
+  ]);
+  if (fabric.status === 'fulfilled') surfaceTextures = fabric.value;
+  if (environment.status === 'fulfilled') {
+    const generator = new THREE.PMREMGenerator(renderer);
+    const filtered = generator.fromEquirectangular(environment.value);
+    scene.environment = filtered.texture;
+    scene.environmentIntensity = .42;
+    environment.value.dispose();
+    generator.dispose();
+  }
+}
 
 // 角色（GLB 骨骼模型 + 动画混合 + IK 覆盖）
 // ============================================================
@@ -418,7 +437,7 @@ const loadCharacter = cachedLoader(loadPlayerGLTF);
 const characterStatus = {};
 const characterSlots = Object.fromEntries(['left', 'right'].map((side, i) => [side, new CharacterSlot({
   load: loadCharacter,
-  create: (gltf, character) => new PlayerView(gltf, { character, accent: i ? 0xFF8268 : 0x3FD0FF, shadowTex }),
+  create: (gltf, character) => new PlayerView(gltf, { character, accent: i ? 0xFF8268 : 0x3FD0FF, shadowTex, surfaceTextures, refined }),
   attach: view => view.addTo(scene),
   detach: view => { scene.remove(view.root, view.blob); },
   onStatus: status => {

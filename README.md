@@ -67,3 +67,9 @@ npm run characters:build
 动作同步默认查找同级 `forehand-lab`，也接受命令参数或 `COURT_LAB_DIR`。新版 Court Lab 每次导出会同时生成 `motion-manifest.json`。导入校验文件摘要、骨架协议、坐标、片段时长、球拍标记及反手触球时机，然后用待发布数据运行步法、骨骼和九角色回归。监听同时覆盖 GLB 与 manifest，两者导出完成后重试导入。历史 GLB 缺少 manifest 时使用原采样校验，并打印兼容模式提示。
 
 目前此同步流程使用直线、斜线两个反手片段。Court Lab 的完整动作目录可作为后续技术接入依据，新增片段仍需结合游戏的来球判定、可达范围与触球逻辑接入。
+
+### 柔光与织物效果
+
+凌川和晴岚的 Blender 源文件已加入球衣 UV。`public/js/athlete-materials.js` 为球衣、皮肤、头发和眼睛设置独立表面参数，球衣叠加 ambientCG Fabric001 的 CC0 法线与粗糙度，场景使用 Poly Haven Studio Small 09 的 1K CC0 环境光。资源保存在 `public/assets`，来源与许可见其中的 `LICENSES.md`。
+
+比赛默认启用升级材质，链接附加 `look=basic` 可查看基础效果。Court Lab 导入角色时同步材质模块和本地资源，页面可即时切换两种效果。`tools/refine-athlete-surfaces.py` 可在已保存的成人角色模型上补充缺少的 UV 并调整表面参数，之后仍由 `characters:build` 导出。当前提升覆盖材质、受光与近景观察，角色沿用现有风格化造型。

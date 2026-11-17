@@ -7,6 +7,7 @@ import { CONTACT_WINDOW, contactFrame } from './contact-racket.js';
 import { CONTACT_TIME, sampleStrokePose } from './stroke.js';
 import { ContactLocomotion } from './locomotion.js';
 import { readyPose } from './ready-pose.js';
+import { AthleteMaterials } from './athlete-materials.js';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
@@ -254,11 +255,11 @@ function blendSliceRacket(frame, pose, axes, root, weight) {
 }
 
 export class PlayerView {
-  constructor(gltf, { accent = 0x3FD0FF, shadowTex, character = getCharacter('athlete') } = {}) {
+  constructor(gltf, { accent = 0x3FD0FF, shadowTex, character = getCharacter('athlete'), surfaceTextures = {}, refined = true } = {}) {
     this.character = character;
     this.id = character.id;
     this.sourceGeometry = new Set();
-    this.sourceTextures = new Set([shadowTex]);
+    this.sourceTextures = new Set([shadowTex, ...Object.values(surfaceTextures)]);
     gltf.scene.traverse(o => {
       if (!o.isMesh) return;
       this.sourceGeometry.add(o.geometry);
@@ -322,6 +323,7 @@ export class PlayerView {
     });
 
     this.model = model;
+    new AthleteMaterials(surfaceTextures).apply(model, refined);
 
     if (character.appearance === 'athlete') addSportsKit(this.root, this.bone, accent);
     else if (character.appearance === 'rabbit') addRabbitKit(this.root, this.bone, accent);
